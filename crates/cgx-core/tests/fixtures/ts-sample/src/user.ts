@@ -1,0 +1,15 @@
+import { query } from './db';
+
+export class UserService {
+  async getUser(id: string) {
+    return await query('SELECT * FROM users WHERE id = ?', [id]);
+  }
+
+  async deleteUser(id: string) {
+    await query('DELETE FROM users WHERE id = ?', [id]);
+  }
+}
+
+export function hashPassword(password: string): string {
+  return Buffer.from(password).toString('base64');
+}

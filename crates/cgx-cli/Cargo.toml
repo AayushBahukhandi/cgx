@@ -1,0 +1,43 @@
+[package]
+name = "cgx-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for cgx — turn any Git repository into a queryable knowledge graph"
+license = "MIT"
+repository = "https://github.com/AayushBahukhandi/cgx"
+keywords = ["codebase", "knowledge-graph", "static-analysis", "cli", "developer-tools"]
+categories = ["development-tools", "command-line-utilities"]
+
+[[bin]]
+name = "cgx"
+path = "src/main.rs"
+
+[dependencies]
+cgx-core = { path = "../cgx-core" }
+cgx-mcp = { path = "../cgx-mcp" }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+indicatif = "0.17"
+console = "0.15"
+ratatui = "0.26"
+crossterm = "0.27"
+fdg-sim = "0.9"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+open = "5"
+git2 = "0.18"
+tokio = { version = "1", features = ["full"] }
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+walkdir = "2"
+dirs = "5"
+sha2 = "0.10"
+notify = "6"

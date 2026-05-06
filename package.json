@@ -1,0 +1,7 @@
+{
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace=packages/web-ui",
+    "build": "npm run build --workspace=packages/web-ui"
+  }
+}

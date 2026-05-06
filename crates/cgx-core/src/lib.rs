@@ -1,0 +1,328 @@
+pub mod walker;
+pub mod parser;
+pub mod parsers;
+pub mod graph;
+pub mod registry;
+pub mod resolver;
+pub mod git;
+pub mod cluster;
+pub mod export;
+pub mod skill;
+pub mod diff;
+pub mod config;
+
+pub use walker::{walk_repo, Language, SourceFile};
+pub use parser::{
+    EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult, ParserRegistry,
+};
+pub use graph::{CommunityRow, Edge, GraphDb, Node, RepoStats};
+pub use registry::{Registry, RepoEntry};
+pub use resolver::resolve;
+pub use git::{analyze_repo, GitAnalysis};
+pub use cluster::{detect_communities, run_clustering};
+pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
+pub use skill::{
+    build_skill_data, generate_skill, generate_agents_md, write_skill, write_agents_md,
+    install_git_hooks, CommunityInfo, SkillData,
+};
+pub use diff::{
+    snapshot_at_commit, diff_graphs, compute_impact, GraphDiff, GraphSnapshot, ImpactReport,
+};
+pub use config::{CgxConfig, AnalyzeConfig, ChatConfig, IndexConfig, McpConfig, ProjectConfig, ServeConfig, SkillConfig, WatchConfig, ExportConfig};
+
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use sha2::{Digest, Sha256};
+
+/// Incremental repository analysis — only re-parses changed files.
+/// Returns true if analysis was performed, false if no changes detected.
+pub fn analyze_repo_incremental(
+    repo_path: &Path,
+    db: &GraphDb,
+    quiet: bool,
+    no_git: bool,
+    no_cluster: bool,
+    verbose: bool,
+) -> anyhow::Result<bool> {
+    let _ = verbose;
+
+    // 1. Walk all files and compute hashes
+    let files = walk_repo(repo_path)?;
+    let mut current_hashes: HashMap<String, String> = HashMap::new();
+    for file in &files {
+        let mut hasher = Sha256::new();
+        hasher.update(file.content.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        current_hashes.insert(file.relative_path.clone(), hash);
+    }
+
+    // 2. Load stored hashes
+    let stored_hashes = db.get_file_hashes().unwrap_or_default();
+
+    // 3. Determine changes
+    let mut changed_paths: HashSet<String> = HashSet::new();
+    for (path, hash) in &current_hashes {
+        if stored_hashes.get(path) != Some(hash) {
+            changed_paths.insert(path.clone());
+        }
+    }
+
+    let mut deleted_paths: Vec<String> = Vec::new();
+    for path in stored_hashes.keys() {
+        if !current_hashes.contains_key(path) {
+            deleted_paths.push(path.clone());
+            changed_paths.insert(path.clone());
+        }
+    }
+
+    if changed_paths.is_empty() {
+        if !quiet {
+            println!("  No file changes detected. Index is up to date.");
+        }
+        return Ok(false);
+    }
+
+    if !quiet {
+        println!("  Incremental: {} changed/new/deleted file(s)", changed_paths.len());
+    }
+
+    // 4. Load existing nodes and filter out changed/deleted ones
+    let existing_nodes = db.get_all_nodes()?;
+    let existing_edges = db.get_all_edges()?;
+
+    let mut kept_nodes: Vec<crate::graph::Node> = existing_nodes
+        .into_iter()
+        .filter(|n| !changed_paths.contains(&n.path))
+        .collect();
+
+    // 5. Parse only changed/new files
+    let changed_files: Vec<_> = files
+        .into_iter()
+        .filter(|f| changed_paths.contains(&f.relative_path))
+        .collect();
+
+    if !quiet {
+        println!("  Re-parsing {} changed file(s)...", changed_files.len());
+    }
+
+    let registry = ParserRegistry::new();
+    let results = registry.parse_all(&changed_files);
+
+    let mut new_nodes: Vec<NodeDef> = Vec::new();
+    let mut new_edges: Vec<EdgeDef> = Vec::new();
+    let mut changed_file_paths: HashSet<String> = HashSet::new();
+    let mut lang_map: HashMap<String, &str> = changed_files
+        .iter()
+        .map(|f| {
+            let lang_str = match f.language {
+                walker::Language::TypeScript => "typescript",
+                walker::Language::JavaScript => "javascript",
+                walker::Language::Python => "python",
+                walker::Language::Rust => "rust",
+                walker::Language::Go => "go",
+                walker::Language::Java => "java",
+                walker::Language::CSharp => "csharp",
+                walker::Language::Php => "php",
+                walker::Language::Unknown => "unknown",
+            };
+            (f.relative_path.clone(), lang_str)
+        })
+        .collect();
+
+    for result in &results {
+        new_nodes.extend(result.nodes.clone());
+        new_edges.extend(result.edges.clone());
+    }
+    for file in &changed_files {
+        changed_file_paths.insert(file.relative_path.clone());
+    }
+
+    // Add file nodes for changed files
+    let parsed_lang_map = resolver::build_language_map(&new_nodes);
+    for (path, lang) in parsed_lang_map {
+        if lang != "unknown" {
+            lang_map.entry(path).or_insert(lang);
+        }
+    }
+    let file_nodes = resolver::create_file_nodes(&changed_file_paths, &lang_map);
+    new_nodes.extend(file_nodes);
+
+    // Convert new nodes to GraphDb format
+    let new_graph_nodes: Vec<crate::graph::Node> = new_nodes
+        .iter()
+        .map(|n| {
+            let lang = lang_map.get(&n.path).copied().unwrap_or("unknown");
+            crate::graph::Node::from_def(n, lang)
+        })
+        .collect();
+
+    // 6. Merge kept + new nodes
+    let new_node_count = new_graph_nodes.len();
+    kept_nodes.extend(new_graph_nodes);
+
+    // 7. Clear and re-insert all nodes
+    db.clear()?;
+    db.upsert_nodes(&kept_nodes)?;
+
+    // Re-convert kept nodes back to NodeDef for resolution
+    let all_node_defs: Vec<NodeDef> = kept_nodes
+        .iter()
+        .map(|n| NodeDef {
+            id: n.id.clone(),
+            kind: match n.kind.as_str() {
+                "File" => NodeKind::File,
+                "Function" => NodeKind::Function,
+                "Class" => NodeKind::Class,
+                "Variable" => NodeKind::Variable,
+                "Type" => NodeKind::Type,
+                "Module" => NodeKind::Module,
+                "Author" => NodeKind::Author,
+                _ => NodeKind::Variable,
+            },
+            name: n.name.clone(),
+            path: n.path.clone(),
+            line_start: n.line_start,
+            line_end: n.line_end,
+            metadata: serde_json::Value::Null,
+        })
+        .collect();
+
+    // Convert new edges + existing edges to EdgeDef
+    let kept_edge_defs: Vec<EdgeDef> = existing_edges
+        .iter()
+        .filter(|e| {
+            // Keep edges that don't reference changed/deleted file nodes
+            let src_file = all_node_defs.iter().find(|n| n.id == e.src).map(|n| n.path.clone());
+            let dst_file = all_node_defs.iter().find(|n| n.id == e.dst).map(|n| n.path.clone());
+            match (src_file, dst_file) {
+                (Some(sp), Some(dp)) => !changed_paths.contains(&sp) && !changed_paths.contains(&dp),
+                _ => false,
+            }
+        })
+        .map(|e| EdgeDef {
+            src: e.src.clone(),
+            dst: e.dst.clone(),
+            kind: match e.kind.as_str() {
+                "CALLS" => EdgeKind::Calls,
+                "IMPORTS" => EdgeKind::Imports,
+                "INHERITS" => EdgeKind::Inherits,
+                "EXPORTS" => EdgeKind::Exports,
+                "CO_CHANGES" => EdgeKind::CoChanges,
+                "OWNS" => EdgeKind::Owns,
+                "DEPENDS_ON" => EdgeKind::DependsOn,
+                _ => EdgeKind::Calls,
+            },
+            weight: e.weight,
+            confidence: e.confidence,
+        })
+        .collect();
+
+    let mut all_edge_defs = kept_edge_defs;
+    all_edge_defs.extend(new_edges);
+
+    // 8. Resolve cross-file symbols
+    let resolved_edges = resolve(&all_node_defs, &all_edge_defs, repo_path)?;
+    let resolved_count = resolved_edges.len();
+
+    let graph_edges: Vec<crate::graph::Edge> = all_edge_defs
+        .iter()
+        .map(crate::graph::Edge::from_def)
+        .collect();
+    let resolved_graph_edges: Vec<crate::graph::Edge> = resolved_edges
+        .iter()
+        .map(crate::graph::Edge::from_def)
+        .collect();
+
+    db.upsert_edges(&graph_edges)?;
+    db.upsert_edges(&resolved_graph_edges)?;
+
+    // 9. Git layer
+    if !no_git {
+        let all_file_paths: Vec<String> = kept_nodes
+            .iter()
+            .filter(|n| n.kind == "File")
+            .map(|n| n.path.clone())
+            .collect();
+        let git_analysis = analyze_repo(repo_path, &all_file_paths)?;
+
+        let max_churn = git_analysis.file_churn.values().copied().fold(0.0, f64::max);
+        for (path, churn) in &git_analysis.file_churn {
+            let normalized = if max_churn > 0.0 { churn / max_churn } else { 0.0 };
+            let _ = db.upsert_node_scores(&format!("file:{}", path), normalized, 0.0);
+        }
+
+        let mut author_nodes = Vec::new();
+        let mut own_edges = Vec::new();
+            for (author, files) in &git_analysis.file_owners {
+            let author_id = format!("author:{}", author);
+            author_nodes.push(crate::graph::Node {
+                id: author_id.clone(),
+                kind: "Author".to_string(),
+                name: author.clone(),
+                path: String::new(),
+                line_start: 0,
+                line_end: 0,
+                language: String::new(),
+                churn: 0.0,
+                coupling: 0.0,
+                community: 0,
+                in_degree: 0,
+                out_degree: 0,
+            });
+            for (file_path, _email, _percent) in files.iter().take(5) {
+                own_edges.push(crate::graph::Edge {
+                    id: format!("owns:{}:{}", author_id, file_path),
+                    src: author_id.clone(),
+                    dst: format!("file:{}", file_path),
+                    kind: "OWNS".to_string(),
+                    weight: 1.0,
+                    confidence: 1.0,
+                });
+            }
+        }
+        db.upsert_nodes(&author_nodes)?;
+        db.upsert_edges(&own_edges)?;
+
+        let mut cochange_edges = Vec::new();
+        for (a, b, weight) in &git_analysis.co_changes {
+            cochange_edges.push(crate::graph::Edge {
+                id: format!("cochange:{}:{}", a, b),
+                src: format!("file:{}", a),
+                dst: format!("file:{}", b),
+                kind: "CO_CHANGES".to_string(),
+                weight: *weight,
+                confidence: 1.0,
+            });
+        }
+        db.upsert_edges(&cochange_edges)?;
+    }
+
+    // 10. Clustering
+    if !no_cluster {
+        let _ = run_clustering(db)?;
+    }
+
+    // 11. Update degrees and coupling
+    db.update_in_out_degrees()?;
+    db.compute_coupling()?;
+
+    // 12. Store new file hashes
+    for (path, hash) in &current_hashes {
+        db.set_file_hash(path, hash)?;
+    }
+    if !deleted_paths.is_empty() {
+        db.remove_file_hashes(&deleted_paths)?;
+    }
+
+    if !quiet {
+        println!("  Incremental re-index complete.");
+        println!("  Kept {} unchanged nodes.", kept_nodes.len() - new_node_count);
+        println!("  Added {} new/changed nodes.", new_node_count);
+        if !deleted_paths.is_empty() {
+            println!("  Removed {} deleted files.", deleted_paths.len());
+        }
+        println!("  Resolved {} cross-file edges.", resolved_count);
+    }
+
+    Ok(true)
+}
