@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cgx_core::{
+use cgx_engine::{
     analyze_repo, walk_repo, Edge, EdgeKind, GraphDb, Node, NodeKind, ParserRegistry, Registry,
     RepoEntry, resolve, run_clustering,
     export_json, export_mermaid, export_dot, export_svg, export_graphml,
@@ -418,8 +418,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn cmd_parse(repo_path: &Path, json: bool) -> anyhow::Result<()> {
-    let files = cgx_core::walk_repo(repo_path)?;
-    let registry = cgx_core::ParserRegistry::new();
+    let files = cgx_engine::walk_repo(repo_path)?;
+    let registry = cgx_engine::ParserRegistry::new();
     let results = registry.parse_all(&files);
 
     let mut total_functions = 0usize;
@@ -543,17 +543,17 @@ fn cmd_analyze(
         if !already_indexed {
             eprintln!("  No existing index found. Running full analyze instead.");
         } else {
-            return match cgx_core::analyze_repo_incremental(
+            return match cgx_engine::analyze_repo_incremental(
                 &canonical, &db, quiet, no_git, no_cluster, verbose,
             ) {
                 Ok(true) => {
                     // Update registry entry
-                    let mut reg = cgx_core::Registry::load()?;
+                    let mut reg = cgx_engine::Registry::load()?;
                     let node_count = db.node_count()?;
                     let edge_count = db.edge_count()?;
                     let breakdown = db.get_language_breakdown()?;
-                    reg.register(cgx_core::RepoEntry {
-                        id: cgx_core::graph::repo_hash(&canonical),
+                    reg.register(cgx_engine::RepoEntry {
+                        id: cgx_engine::graph::repo_hash(&canonical),
                         name: repo_name.clone(),
                         path: canonical.clone(),
                         db_path: db.db_path.clone(),
@@ -565,12 +565,12 @@ fn cmd_analyze(
                     reg.save()?;
 
                     // Regenerate skill files
-                    let skill_data = cgx_core::build_skill_data(&db)?;
-                    let _ = cgx_core::write_skill(&canonical, &skill_data);
-                    let _ = cgx_core::write_agents_md(&canonical, &skill_data);
+                    let skill_data = cgx_engine::build_skill_data(&db)?;
+                    let _ = cgx_engine::write_skill(&canonical, &skill_data);
+                    let _ = cgx_engine::write_agents_md(&canonical, &skill_data);
 
                     if !no_hooks {
-                        let _ = cgx_core::install_git_hooks(&canonical);
+                        let _ = cgx_engine::install_git_hooks(&canonical);
                     }
 
                     if !quiet {
@@ -628,20 +628,20 @@ fn cmd_analyze(
         .iter()
         .map(|f| {
             let lang_str = match f.language {
-                cgx_core::walker::Language::TypeScript => "typescript",
-                cgx_core::walker::Language::JavaScript => "javascript",
-                cgx_core::walker::Language::Python => "python",
-                cgx_core::walker::Language::Rust => "rust",
-                cgx_core::walker::Language::Go => "go",
-                cgx_core::walker::Language::Java => "java",
-                cgx_core::walker::Language::CSharp => "csharp",
-                cgx_core::walker::Language::Php => "php",
-                cgx_core::walker::Language::Unknown => "unknown",
+                cgx_engine::walker::Language::TypeScript => "typescript",
+                cgx_engine::walker::Language::JavaScript => "javascript",
+                cgx_engine::walker::Language::Python => "python",
+                cgx_engine::walker::Language::Rust => "rust",
+                cgx_engine::walker::Language::Go => "go",
+                cgx_engine::walker::Language::Java => "java",
+                cgx_engine::walker::Language::CSharp => "csharp",
+                cgx_engine::walker::Language::Php => "php",
+                cgx_engine::walker::Language::Unknown => "unknown",
             };
             (f.relative_path.clone(), lang_str)
         })
         .collect();
-    let parsed_lang_map = cgx_core::resolver::build_language_map(&all_nodes);
+    let parsed_lang_map = cgx_engine::resolver::build_language_map(&all_nodes);
     for (path, lang) in parsed_lang_map {
         // Never overwrite walker-derived language with "unknown" from parsed map.
         // The walker has the ground truth; parsed_lang_map fills in any gaps.
@@ -649,7 +649,7 @@ fn cmd_analyze(
             lang_map.entry(path).or_insert(lang);
         }
     }
-    let file_nodes = cgx_core::resolver::create_file_nodes(&file_paths, &lang_map);
+    let file_nodes = cgx_engine::resolver::create_file_nodes(&file_paths, &lang_map);
     all_nodes.extend(file_nodes);
 
     // Step 3: Resolve cross-file symbols
@@ -842,14 +842,14 @@ fn cmd_analyze(
     reg.save()?;
 
     // Step 8: Generate skill files + install git hooks
-    let skill_data = cgx_core::build_skill_data(&db)?;
-    let _ = cgx_core::write_skill(&canonical, &skill_data);
-    let _ = cgx_core::write_agents_md(&canonical, &skill_data);
+    let skill_data = cgx_engine::build_skill_data(&db)?;
+    let _ = cgx_engine::write_skill(&canonical, &skill_data);
+    let _ = cgx_engine::write_agents_md(&canonical, &skill_data);
 
     let (hook_pc, hook_pco) = if no_hooks {
         (false, false)
     } else {
-        cgx_core::install_git_hooks(&canonical).unwrap_or((false, false))
+        cgx_engine::install_git_hooks(&canonical).unwrap_or((false, false))
     };
 
     if !quiet {
@@ -2533,7 +2533,7 @@ async fn cmd_view_web(
 fn cmd_summary(repo_path: &Path) -> anyhow::Result<()> {
     let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
-    let data = cgx_core::build_skill_data(&db)?;
+    let data = cgx_engine::build_skill_data(&db)?;
 
     println!();
     println!("  REPOSITORY SUMMARY");
@@ -2584,7 +2584,7 @@ fn resolve_repo(repo: Option<PathBuf>) -> PathBuf {
     p.canonicalize().unwrap_or(p)
 }
 
-fn resolve_id(all_nodes: &[cgx_core::Node], name_or_id: &str) -> Option<String> {
+fn resolve_id(all_nodes: &[cgx_engine::Node], name_or_id: &str) -> Option<String> {
     if all_nodes.iter().any(|n| n.id == name_or_id) {
         return Some(name_or_id.to_string());
     }
@@ -2753,7 +2753,7 @@ fn cmd_init(name: Option<String>, yes: bool) -> anyhow::Result<()> {
         }
     });
 
-    let mut config = cgx_core::CgxConfig::default();
+    let mut config = cgx_engine::CgxConfig::default();
     config.project.name = project_name.clone();
 
     if !yes {
@@ -2865,7 +2865,7 @@ fn cmd_query_chain(path: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
     let all = db.get_all_nodes()?;
     let from_id = resolve_id(&all, parts[0]).ok_or_else(|| anyhow::anyhow!("From not found: {}", parts[0]))?;
     let to_id = resolve_id(&all, parts[1]).ok_or_else(|| anyhow::anyhow!("To not found: {}", parts[1]))?;
-    let node_map: std::collections::HashMap<&str, &cgx_core::Node> = all.iter().map(|n| (n.id.as_str(), n)).collect();
+    let node_map: std::collections::HashMap<&str, &cgx_engine::Node> = all.iter().map(|n| (n.id.as_str(), n)).collect();
     // Build name -> [id] lookup to resolve short callee names in CALLS edges
     let mut name_to_ids: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
     for n in &all { name_to_ids.entry(n.name.as_str()).or_default().push(n.id.as_str()); }
@@ -3044,7 +3044,7 @@ fn cmd_publish(repo_path: &Path, dry_run: bool, badge: bool) -> anyhow::Result<(
     if db.node_count()? == 0 {
         anyhow::bail!("No indexed graph. Run `cgx analyze` first.");
     }
-    let graph_json = cgx_core::export_json(&db)?;
+    let graph_json = cgx_engine::export_json(&db)?;
 
     // Step 3: Find dist directory
     let dist_dir = workspace_root.join("packages/web-ui/dist");
@@ -3202,17 +3202,17 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
     let all_edges = db.get_all_edges()?;
 
     // Build the "after" snapshot from the indexed DB
-    let after_nodes: Vec<cgx_core::NodeDef> = all_nodes.iter().map(|n| cgx_core::NodeDef {
+    let after_nodes: Vec<cgx_engine::NodeDef> = all_nodes.iter().map(|n| cgx_engine::NodeDef {
         id: n.id.clone(),
         kind: match n.kind.as_str() {
-            "Function" => cgx_core::NodeKind::Function,
-            "Class" => cgx_core::NodeKind::Class,
-            "File" => cgx_core::NodeKind::File,
-            "Module" => cgx_core::NodeKind::Module,
-            "Variable" => cgx_core::NodeKind::Variable,
-            "Type" => cgx_core::NodeKind::Type,
-            "Author" => cgx_core::NodeKind::Author,
-            _ => cgx_core::NodeKind::File,
+            "Function" => cgx_engine::NodeKind::Function,
+            "Class" => cgx_engine::NodeKind::Class,
+            "File" => cgx_engine::NodeKind::File,
+            "Module" => cgx_engine::NodeKind::Module,
+            "Variable" => cgx_engine::NodeKind::Variable,
+            "Type" => cgx_engine::NodeKind::Type,
+            "Author" => cgx_engine::NodeKind::Author,
+            _ => cgx_engine::NodeKind::File,
         },
         name: n.name.clone(),
         path: n.path.clone(),
@@ -3221,24 +3221,24 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
         ..Default::default()
     }).collect();
 
-    let after_edges: Vec<cgx_core::EdgeDef> = all_edges.iter().map(|e| cgx_core::EdgeDef {
+    let after_edges: Vec<cgx_engine::EdgeDef> = all_edges.iter().map(|e| cgx_engine::EdgeDef {
         src: e.src.clone(),
         dst: e.dst.clone(),
         kind: match e.kind.as_str() {
-            "CALLS" => cgx_core::EdgeKind::Calls,
-            "IMPORTS" => cgx_core::EdgeKind::Imports,
-            "INHERITS" => cgx_core::EdgeKind::Inherits,
-            "EXPORTS" => cgx_core::EdgeKind::Exports,
-            "CO_CHANGES" => cgx_core::EdgeKind::CoChanges,
-            "OWNS" => cgx_core::EdgeKind::Owns,
-            "DEPENDS_ON" => cgx_core::EdgeKind::DependsOn,
-            _ => cgx_core::EdgeKind::Calls,
+            "CALLS" => cgx_engine::EdgeKind::Calls,
+            "IMPORTS" => cgx_engine::EdgeKind::Imports,
+            "INHERITS" => cgx_engine::EdgeKind::Inherits,
+            "EXPORTS" => cgx_engine::EdgeKind::Exports,
+            "CO_CHANGES" => cgx_engine::EdgeKind::CoChanges,
+            "OWNS" => cgx_engine::EdgeKind::Owns,
+            "DEPENDS_ON" => cgx_engine::EdgeKind::DependsOn,
+            _ => cgx_engine::EdgeKind::Calls,
         },
         weight: e.weight,
         confidence: e.confidence,
     }).collect();
 
-    let after = cgx_core::GraphSnapshot {
+    let after = cgx_engine::GraphSnapshot {
         nodes: after_nodes,
         edges: after_edges,
         commit: "HEAD".to_string(),
@@ -3249,10 +3249,10 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
         after.clone()
     } else {
         eprintln!("  Taking snapshot at {}...", commit);
-        cgx_core::snapshot_at_commit(&canonical, commit)?
+        cgx_engine::snapshot_at_commit(&canonical, commit)?
     };
 
-    let diff = cgx_core::diff_graphs(&before, &after);
+    let diff = cgx_engine::diff_graphs(&before, &after);
 
     println!();
     println!("  GRAPH DIFF: HEAD vs {}", commit);
@@ -3335,7 +3335,7 @@ fn cmd_impact(repo_path: &Path, since_days: u32) -> anyhow::Result<()> {
     let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
 
     eprintln!("  Analyzing changes in the last {} days...", since_days);
-    let report = cgx_core::compute_impact(&canonical, since_days)?;
+    let report = cgx_engine::compute_impact(&canonical, since_days)?;
 
     println!();
     println!("  IMPACT ANALYSIS — last {} days", since_days);
@@ -3431,7 +3431,7 @@ fn cmd_doctor() -> anyhow::Result<()> {
     println!();
 
     // 3. Registry
-    match cgx_core::Registry::load() {
+    match cgx_engine::Registry::load() {
         Ok(reg) => {
             println!("  Registry ({} repos indexed)", reg.repos.len());
             for entry in &reg.repos {
@@ -3622,7 +3622,7 @@ fn fmt_bytes(bytes: u64) -> String {
 
 fn cmd_clean(repo_path: &Path) -> anyhow::Result<()> {
     let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
-    let mut reg = cgx_core::Registry::load()?;
+    let mut reg = cgx_engine::Registry::load()?;
 
     if let Some(pos) = reg.repos.iter().position(|r| {
         r.path.canonicalize().ok().as_ref() == Some(&canonical)
@@ -3652,7 +3652,7 @@ fn cmd_clean(repo_path: &Path) -> anyhow::Result<()> {
 }
 
 fn cmd_clean_all() -> anyhow::Result<()> {
-    let mut reg = cgx_core::Registry::load()?;
+    let mut reg = cgx_engine::Registry::load()?;
     let count = reg.repos.len();
 
     for entry in reg.repos.drain(..) {

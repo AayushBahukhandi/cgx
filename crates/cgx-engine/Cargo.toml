@@ -1,5 +1,5 @@
 [package]
-name = "cgx-core"
+name = "cgx-engine"
 version = "0.1.0"
 edition = "2021"
 description = "Core engine for cgx — Tree-sitter parsing, DuckDB graph storage, git analysis, and clustering"

@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
     eprintln!("cgx-mcp: indexing repo at {}", canonical.display());
 
     // Verify repo is indexed
-    match cgx_core::GraphDb::open(&canonical) {
+    match cgx_engine::GraphDb::open(&canonical) {
         Ok(db) => {
             if db.node_count().unwrap_or(0) == 0 {
                 eprintln!("Warning: repo has no indexed graph. Run `cgx analyze` first.");

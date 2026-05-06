@@ -558,7 +558,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "axum",
- "cgx-core",
+ "cgx-engine",
  "cgx-mcp",
  "chrono",
  "clap",
@@ -586,7 +586,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cgx-core"
+name = "cgx-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -618,7 +618,7 @@ name = "cgx-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cgx-core",
+ "cgx-engine",
  "chrono",
  "serde",
  "serde_json",

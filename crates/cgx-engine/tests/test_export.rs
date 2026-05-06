@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use cgx_core::{export_dot, export_graphml, export_json, export_mermaid, export_svg, Edge, GraphDb, Node};
+use cgx_engine::{export_dot, export_graphml, export_json, export_mermaid, export_svg, Edge, GraphDb, Node};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 

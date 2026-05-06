@@ -1,4 +1,4 @@
-use cgx_core::{walk_repo, ParserRegistry};
+use cgx_engine::{walk_repo, ParserRegistry};
 use std::path::PathBuf;
 
 fn fixture_path(relative: &str) -> PathBuf {
@@ -49,7 +49,7 @@ fn test_ts_parser_extracts_symbols() {
     let import_edges: usize = results
         .iter()
         .flat_map(|r| r.edges.iter())
-        .filter(|e| e.kind == cgx_core::EdgeKind::Imports)
+        .filter(|e| e.kind == cgx_engine::EdgeKind::Imports)
         .count();
     assert!(
         import_edges >= 3,
@@ -151,7 +151,7 @@ fn test_import_edges_present() {
     let all_edges: Vec<_> = results.iter().flat_map(|r| r.edges.iter()).collect();
     let import_edges: Vec<_> = all_edges
         .iter()
-        .filter(|e| e.kind == cgx_core::EdgeKind::Imports)
+        .filter(|e| e.kind == cgx_engine::EdgeKind::Imports)
         .collect();
 
     assert!(

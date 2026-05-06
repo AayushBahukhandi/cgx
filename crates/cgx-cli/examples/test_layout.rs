@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use cgx_core::{GraphDb, Node, Edge};
+use cgx_engine::{GraphDb, Node, Edge};
 
 fn main() {
     let repo_path = Path::new("/Users/aayush/Developer/codegraph");

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use cgx_core::{Edge, Node};
+use cgx_engine::{Edge, Node};
 
 use super::layout::{normalize, GraphSim};
 

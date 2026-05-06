@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use cgx_core::{GraphDb, Node, Edge, build_skill_data, generate_skill, generate_agents_md, SkillData, CommunityInfo};
+use cgx_engine::{GraphDb, Node, Edge, build_skill_data, generate_skill, generate_agents_md, SkillData, CommunityInfo};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 

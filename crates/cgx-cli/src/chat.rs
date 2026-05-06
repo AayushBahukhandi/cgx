@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
-use cgx_core::GraphDb;
+use cgx_engine::GraphDb;
 use futures::stream::{self, Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncBufReadExt;
@@ -54,7 +54,7 @@ pub async fn chat_stream(
     };
 
     // Load config (falls back to defaults if no config file exists)
-    let config = cgx_core::CgxConfig::load(&repo_path).unwrap_or_default();
+    let config = cgx_engine::CgxConfig::load(&repo_path).unwrap_or_default();
 
     // Build graph context
     let (context, sources) = build_graph_context(&db, &body.message, body.selected_node.as_deref());
@@ -238,7 +238,7 @@ fn extract_keywords(message: &str) -> Vec<String> {
 
 /// Dispatch to the configured LLM provider
 async fn stream_llm_response(
-    chat_config: &cgx_core::ChatConfig,
+    chat_config: &cgx_engine::ChatConfig,
     prompt: &str,
     sources: &[SourceNode],
 ) -> anyhow::Result<SseStream> {
@@ -276,7 +276,7 @@ async fn stream_llm_response(
 
 async fn stream_openai(
     client: &reqwest::Client,
-    config: &cgx_core::ChatConfig,
+    config: &cgx_engine::ChatConfig,
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {
@@ -330,7 +330,7 @@ async fn stream_openai(
 
 async fn stream_anthropic(
     client: &reqwest::Client,
-    config: &cgx_core::ChatConfig,
+    config: &cgx_engine::ChatConfig,
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {
@@ -383,7 +383,7 @@ async fn stream_anthropic(
 
 async fn stream_ollama(
     client: &reqwest::Client,
-    config: &cgx_core::ChatConfig,
+    config: &cgx_engine::ChatConfig,
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {
@@ -437,7 +437,7 @@ async fn stream_ollama(
 
 async fn stream_openai_compatible(
     client: &reqwest::Client,
-    config: &cgx_core::ChatConfig,
+    config: &cgx_engine::ChatConfig,
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {

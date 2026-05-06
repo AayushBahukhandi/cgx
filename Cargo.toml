@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cgx-core", "crates/cgx-cli", "crates/cgx-mcp"]
+members = ["crates/cgx-engine", "crates/cgx-cli", "crates/cgx-mcp"]
 resolver = "2"
 
 [workspace.dependencies]

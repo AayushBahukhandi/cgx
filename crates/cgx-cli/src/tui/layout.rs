@@ -5,7 +5,7 @@ use fdg_sim::{
 };
 use fdg_sim::petgraph::graph::NodeIndex;
 
-use cgx_core::{Edge, Node};
+use cgx_engine::{Edge, Node};
 
 pub struct GraphSim {
     sim: Simulation<(), ()>,
@@ -110,7 +110,7 @@ pub fn normalize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgx_core::{Edge, Node};
+    use cgx_engine::{Edge, Node};
 
     fn make_node(id: &str, name: &str) -> Node {
         Node {

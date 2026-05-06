@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use cgx_core::GraphDb;
+use cgx_engine::GraphDb;
 
 pub fn handle_tool_call(name: &str, args: &serde_json::Value, repo_path: &Path) -> Result<String, String> {
     let db = || GraphDb::open(repo_path).map_err(|e| e.to_string());
@@ -69,7 +69,7 @@ fn tool_get_repo_summary(repo_path: &Path) -> Result<serde_json::Value, String> 
         .map(|n| serde_json::json!({ "id": n.id, "name": n.name, "kind": n.kind }))
         .collect();
 
-    let mut sorted: Vec<&cgx_core::Node> = all_nodes.iter().filter(|n| n.kind != "File").collect();
+    let mut sorted: Vec<&cgx_engine::Node> = all_nodes.iter().filter(|n| n.kind != "File").collect();
     sorted.sort_by(|a, b| b.in_degree.cmp(&a.in_degree));
     let god_nodes: Vec<serde_json::Value> = sorted.iter().take(5)
         .map(|n| serde_json::json!({ "id": n.id, "name": n.name, "kind": n.kind, "in_degree": n.in_degree }))
@@ -136,7 +136,7 @@ fn tool_get_neighbors(db: &GraphDb, node_id: &str, depth: u8) -> Result<String, 
 
 fn tool_get_call_chain(db: &GraphDb, from: &str, to: &str) -> Result<String, String> {
     let all = db.get_all_nodes().map_err(|e| e.to_string())?;
-    let node_map: std::collections::HashMap<&str, &cgx_core::Node> =
+    let node_map: std::collections::HashMap<&str, &cgx_engine::Node> =
         all.iter().map(|n| (n.id.as_str(), n)).collect();
 
     let from_id = resolve_node_id(&all, from);
@@ -355,7 +355,7 @@ fn get_i64(args: &serde_json::Value, key: &str) -> Result<i64, String> {
         .ok_or_else(|| format!("Missing required argument: {}", key))
 }
 
-fn resolve_node_id(all_nodes: &[cgx_core::Node], name_or_id: &str) -> Option<String> {
+fn resolve_node_id(all_nodes: &[cgx_engine::Node], name_or_id: &str) -> Option<String> {
     if all_nodes.iter().any(|n| n.id == name_or_id) {
         return Some(name_or_id.to_string());
     }

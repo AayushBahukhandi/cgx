@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use cgx_core::{EdgeDef, EdgeKind, NodeDef, NodeKind, resolve};
+use cgx_engine::{EdgeDef, EdgeKind, NodeDef, NodeKind, resolve};
 
 #[test]
 fn test_resolve_cross_file_imports() {

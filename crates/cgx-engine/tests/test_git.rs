@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use cgx_core::analyze_repo;
+use cgx_engine::analyze_repo;
 
 fn fixture_path(relative: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

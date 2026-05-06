@@ -235,7 +235,7 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use cgx_core::{Node, Edge};
+    use cgx_engine::{Node, Edge};
     use super::super::app::App;
     use std::path::PathBuf;
 
