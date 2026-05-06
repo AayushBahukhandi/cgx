@@ -1,8 +1,9 @@
 [package]
 name = "cgx-engine"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Core engine for cgx — Tree-sitter parsing, DuckDB graph storage, git analysis, and clustering"
+readme = "README.md"
 license = "MIT"
 repository = "https://github.com/AayushBahukhandi/cgx"
 keywords = ["codebase", "knowledge-graph", "static-analysis", "git", "tree-sitter"]
