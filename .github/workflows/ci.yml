@@ -31,6 +31,30 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace --locked
 
+      - name: Initialize git test fixture
+        run: |
+          cd crates/cgx-engine/tests/fixtures/git-sample
+          git init
+          git config user.email "alice@dev.io"
+          git config user.name "Alice"
+          git add src/auth.ts src/db.ts
+          git commit -m "commit 1" --author="Alice <alice@dev.io>"
+          echo "// update" >> src/auth.ts
+          echo "// update" >> src/db.ts
+          git add src/auth.ts src/db.ts
+          git commit -m "commit 2" --author="Alice <alice@dev.io>"
+          git config user.email "bob@dev.io"
+          git config user.name "Bob"
+          echo "// router" >> src/router.ts
+          git add src/router.ts
+          git commit -m "commit 3" --author="Bob <bob@dev.io>"
+          git config user.email "alice@dev.io"
+          git config user.name "Alice"
+          echo "// update2" >> src/auth.ts
+          echo "// update2" >> src/db.ts
+          git add src/auth.ts src/db.ts
+          git commit -m "commit 4" --author="Alice <alice@dev.io>"
+
       - name: Run tests
         run: cargo test --workspace --locked
 
