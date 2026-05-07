@@ -42,7 +42,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Create web UI dist stub (required by RustEmbed at compile time)
-        run: mkdir -p packages/web-ui/dist && echo '<!DOCTYPE html><html></html>' > packages/web-ui/dist/index.html
+        run: mkdir -p crates/cgx-cli/web-ui-dist && echo '<!DOCTYPE html><html></html>' > crates/cgx-cli/web-ui-dist/index.html
 
       - name: Build workspace
         run: cargo build --workspace --locked

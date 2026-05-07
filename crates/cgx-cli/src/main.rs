@@ -2101,7 +2101,7 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
 // In debug builds rust-embed serves from the filesystem (fast iteration).
 // In release builds everything is bundled — no external files needed.
 #[derive(rust_embed::RustEmbed)]
-#[folder = "../../packages/web-ui/dist"]
+#[folder = "web-ui-dist"]
 struct WebUiAssets;
 
 async fn serve_ui_asset(uri: axum::http::Uri) -> axum::response::Response {
