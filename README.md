@@ -160,12 +160,13 @@ Both regenerate automatically on every `git commit` via installed hooks.
 ### Analysis
 
 ```bash
-cgx analyze                    # index current repo
-cgx analyze ./path             # index any local path
-cgx analyze --watch            # live-reload on file save
-cgx analyze --incremental      # re-parse only changed files (used by git hooks)
-cgx analyze --no-git           # skip git history layer
-cgx analyze --force            # full clean re-index
+cgx analyze                        # index current repo
+cgx analyze ./path                 # index any local path
+cgx analyze github:owner/repo      # clone from GitHub and index (stored in ~/.cgx/clones/)
+cgx analyze --watch                # live-reload on file save
+cgx analyze --incremental          # re-parse only changed files (used by git hooks)
+cgx analyze --no-git               # skip git history layer
+cgx analyze --force                # full clean re-index
 ```
 
 ### Visualize
