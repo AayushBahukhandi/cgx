@@ -216,14 +216,14 @@ pub fn build_skill_data(db: &GraphDb) -> anyhow::Result<SkillData> {
         .iter()
         .filter(|n| n.in_degree == 0 && n.kind != "File" && n.kind != "Author")
         .collect();
-    entry_nodes.sort_by(|a, b| b.out_degree.cmp(&a.out_degree));
+    entry_nodes.sort_by_key(|node| std::cmp::Reverse(node.out_degree));
     let entry_points: Vec<Node> = entry_nodes.iter().take(5).map(|&n| n.clone()).collect();
 
     let mut god_nodes: Vec<&Node> = all_nodes
         .iter()
         .filter(|n| n.in_degree > 0 && n.kind != "File")
         .collect();
-    god_nodes.sort_by(|a, b| b.in_degree.cmp(&a.in_degree));
+    god_nodes.sort_by_key(|node| std::cmp::Reverse(node.in_degree));
     // Deduplicate by name (same function defined in multiple files shows same name)
     let mut seen_names = std::collections::HashSet::new();
     let top_god_nodes: Vec<Node> = god_nodes.iter()

@@ -12,10 +12,10 @@ fn temp_dir() -> PathBuf {
         std::process::id(),
         count
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("failed to create test dir");
 
     // Create a dummy file to make the dir a "repo"
-    std::fs::write(dir.join("dummy.txt"), "test").unwrap();
+    std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
 }
 
@@ -63,7 +63,7 @@ fn test_insert_and_query_nodes() {
 
     let node = db.get_node("fn:src/test.ts:hello").expect("get failed");
     assert!(node.is_some(), "should find hello node");
-    let n = node.unwrap();
+    let n = node.expect("hello node should exist");
     assert_eq!(n.name, "hello");
     assert_eq!(n.kind, "Function");
     assert!((n.churn - 0.5).abs() < 0.001);
@@ -282,8 +282,14 @@ fn test_update_in_out_degrees() {
     db.upsert_edges(&edges).expect("upsert edges failed");
     db.update_in_out_degrees().expect("update failed");
 
-    let caller = db.get_node("fn:src/a.ts:caller").expect("get failed").unwrap();
-    let callee = db.get_node("fn:src/b.ts:callee").expect("get failed").unwrap();
+    let caller = db
+        .get_node("fn:src/a.ts:caller")
+        .expect("get caller failed")
+        .expect("caller should exist");
+    let callee = db
+        .get_node("fn:src/b.ts:callee")
+        .expect("get callee failed")
+        .expect("callee should exist");
 
     assert_eq!(caller.out_degree, 1, "caller should have out_degree 1");
     assert_eq!(caller.in_degree, 0, "caller should have in_degree 0");
@@ -313,17 +319,20 @@ fn test_upsert_replaces_existing() {
         out_degree: 0,
     };
 
-    db.upsert_nodes(&[node1.clone()]).expect("first upsert failed");
-    assert_eq!(db.node_count().unwrap(), 1);
+    db.upsert_nodes(std::slice::from_ref(&node1)).expect("first upsert failed");
+    assert_eq!(db.node_count().expect("node count failed"), 1);
 
     let node2 = Node {
         churn: 0.9,
         ..node1.clone()
     };
     db.upsert_nodes(&[node2]).expect("second upsert failed");
-    assert_eq!(db.node_count().unwrap(), 1);
+    assert_eq!(db.node_count().expect("node count failed"), 1);
 
-    let retrieved = db.get_node("fn:src/x.ts:testfn").unwrap().unwrap();
+    let retrieved = db
+        .get_node("fn:src/x.ts:testfn")
+        .expect("get updated node failed")
+        .expect("updated node should exist");
     assert!((retrieved.churn - 0.9).abs() < 0.001, "should have updated churn");
 
     let _ = std::fs::remove_dir_all(&dir);

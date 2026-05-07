@@ -286,7 +286,7 @@ mod tests {
         let app = App::new(nodes, edges, None, PathBuf::from("/tmp/test"));
 
         let backend = TestBackend::new(120, 40);
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend).expect("failed to create test terminal");
         terminal.draw(|f| {
             let area = f.size();
             // Simulate the layout from render_ui
@@ -303,7 +303,8 @@ mod tests {
             let inner_graph = graph_block.inner(graph_area);
             f.render_widget(graph_block, graph_area);
             render_graph(&app, inner_graph, f.buffer_mut());
-        }).unwrap();
+        })
+        .expect("failed to draw graph widget");
 
         let buf = terminal.backend().buffer().clone();
 

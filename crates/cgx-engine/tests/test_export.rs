@@ -12,8 +12,8 @@ fn temp_dir() -> PathBuf {
         std::process::id(),
         count
     ));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("dummy.txt"), "test").unwrap();
+    std::fs::create_dir_all(&dir).expect("failed to create test dir");
+    std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
 }
 
@@ -160,7 +160,7 @@ fn test_export_json_valid_structure() {
             >= 4
     );
 
-    let nodes = data["nodes"].as_array().unwrap();
+    let nodes = data["nodes"].as_array().expect("nodes should be an array");
     assert!(nodes.len() >= 5);
     let first_node = &nodes[0];
     assert!(first_node.get("id").is_some());
@@ -171,7 +171,9 @@ fn test_export_json_valid_structure() {
     assert!(first_node.get("coupling").is_some());
     assert!(first_node.get("community").is_some());
 
-    let communities = data["communities"].as_array().unwrap();
+    let communities = data["communities"]
+        .as_array()
+        .expect("communities should be an array");
     assert!(!communities.is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -184,19 +186,19 @@ fn test_export_json_round_trip_edges() {
     seed_graph(&db);
 
     let json = export_json(&db).expect("json export failed");
-    let data: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let data: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
 
     let node_ids: std::collections::HashSet<&str> = data["nodes"]
         .as_array()
-        .unwrap()
+        .expect("nodes should be an array")
         .iter()
         .filter_map(|n| n["id"].as_str())
         .collect();
 
-    let edges = data["edges"].as_array().unwrap();
+    let edges = data["edges"].as_array().expect("edges should be an array");
     for edge in edges {
-        let src = edge["src"].as_str().unwrap();
-        let dst = edge["dst"].as_str().unwrap();
+        let src = edge["src"].as_str().expect("edge src should be a string");
+        let dst = edge["dst"].as_str().expect("edge dst should be a string");
         assert!(
             node_ids.contains(src),
             "edge source '{}' not found in nodes", src
@@ -352,11 +354,11 @@ fn test_export_json_includes_all_kinds() {
     seed_graph(&db);
 
     let json = export_json(&db).expect("json export failed");
-    let data: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let data: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
 
     let kinds: std::collections::HashSet<&str> = data["nodes"]
         .as_array()
-        .unwrap()
+        .expect("nodes should be an array")
         .iter()
         .filter_map(|n| n["kind"].as_str())
         .collect();
@@ -367,7 +369,7 @@ fn test_export_json_includes_all_kinds() {
 
     let edge_kinds: std::collections::HashSet<&str> = data["edges"]
         .as_array()
-        .unwrap()
+        .expect("edges should be an array")
         .iter()
         .filter_map(|e| e["kind"].as_str())
         .collect();

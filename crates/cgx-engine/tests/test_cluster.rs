@@ -13,8 +13,8 @@ fn temp_dir() -> PathBuf {
         std::process::id(),
         count
     ));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("dummy.txt"), "test").unwrap();
+    std::fs::create_dir_all(&dir).expect("failed to create test dir");
+    std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
 }
 
@@ -58,7 +58,13 @@ fn test_detect_communities_single_node() {
     let edges = vec![];
     let communities = detect_communities(&nodes, &edges);
     assert_eq!(communities.len(), 1);
-    assert_eq!(communities.get("fn:src/a.ts:foo").copied().unwrap(), 1);
+    assert_eq!(
+        communities
+            .get("fn:src/a.ts:foo")
+            .copied()
+            .expect("foo community should exist"),
+        1
+    );
 }
 
 #[test]
@@ -245,7 +251,10 @@ fn test_community_query_by_id() {
     db.upsert_edges(&edges).expect("upsert edges failed");
     run_clustering(&db).expect("clustering failed");
 
-    let first_node = db.get_node("fn:src/x.ts:one").unwrap().unwrap();
+    let first_node = db
+        .get_node("fn:src/x.ts:one")
+        .expect("get first node failed")
+        .expect("first node should exist");
     let community_id = first_node.community;
 
     let community_nodes = db
@@ -282,5 +291,5 @@ fn test_detect_communities_respects_edge_weights() {
         "center should cluster with strong (higher edge weight)"
     );
 
-    let _ = std::fs::remove_dir_all(&std::env::temp_dir());
+    let _ = std::fs::remove_dir_all(std::env::temp_dir());
 }

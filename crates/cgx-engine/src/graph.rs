@@ -652,7 +652,7 @@ impl GraphDb {
             })
             .collect();
 
-        result.sort_by(|a, b| b.2.cmp(&a.2));
+        result.sort_by_key(|row| std::cmp::Reverse(row.2));
         Ok(result)
     }
 

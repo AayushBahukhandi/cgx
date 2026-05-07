@@ -219,7 +219,9 @@ fn resolve_java_import(_current: &str, import: &str) -> String {
         return String::new();
     }
     // If last part is uppercase, it's likely a class name
-    let last = parts.last().unwrap();
+    let Some(last) = parts.last() else {
+        return String::new();
+    };
     if last.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
         let path = parts.join("/");
         format!("{}.java", path)

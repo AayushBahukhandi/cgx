@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -13,8 +12,8 @@ fn temp_dir() -> PathBuf {
         std::process::id(),
         count
     ));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("dummy.txt"), "test").unwrap();
+    std::fs::create_dir_all(&dir).expect("failed to create test dir");
+    std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
 }
 

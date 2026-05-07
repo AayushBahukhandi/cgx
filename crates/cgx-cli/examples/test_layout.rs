@@ -4,7 +4,7 @@ use cgx_engine::{GraphDb, Node, Edge};
 
 fn main() {
     let repo_path = Path::new("/Users/aayush/Developer/codegraph");
-    let db = match GraphDb::open(&repo_path) {
+    let db = match GraphDb::open(repo_path) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("Failed to open graph DB: {e}");

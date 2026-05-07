@@ -500,7 +500,10 @@ fn resolve_github_path(path: &Path) -> anyhow::Result<PathBuf> {
                 eprintln!("  Warning: git pull failed, using existing files");
             }
         } else {
-            std::fs::create_dir_all(clone_dir.parent().unwrap())?;
+            let clone_parent = clone_dir
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("clone path has no parent: {}", clone_dir.display()))?;
+            std::fs::create_dir_all(clone_parent)?;
             let url = format!("https://github.com/{}/{}", owner, repo);
             println!("  Cloning {} into {}...", url, clone_dir.display());
             let status = std::process::Command::new("git")
