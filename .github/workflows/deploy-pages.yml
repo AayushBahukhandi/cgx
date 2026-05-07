@@ -51,7 +51,7 @@ jobs:
         run: ./target/release/cgx analyze .
 
       - name: Export graph JSON
-        run: ./target/release/cgx export --format json --out /tmp/cgx-graph.json .
+        run: ./target/release/cgx export --format json --out /tmp/cgx-graph.json
 
       - name: Inject graph data into index.html
         run: |
