@@ -9,13 +9,12 @@
 
 **Turn any Git repository into a queryable knowledge graph.**
 
-<!-- TODO: Update badge URLs after setting up GitHub Actions and crates.io -->
 [![CI](https://github.com/AayushBahukhandi/cgx/actions/workflows/ci.yml/badge.svg)](https://github.com/AayushBahukhandi/cgx/actions)
-[![crates.io](https://img.shields.io/crates/v/cgx.svg)](https://crates.io/crates/cgx)
+[![crates.io](https://img.shields.io/crates/v/cgx-cli.svg)](https://crates.io/crates/cgx-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Graph](https://img.shields.io/badge/cgx-graph-blue)](https://AayushBahukhandi.github.io/cgx/)
+[![Graph](https://img.shields.io/badge/cgx-live%20graph-blue)](https://aayushbahukhandi.github.io/cgx/)
 
-[**Live Demo**](https://AayushBahukhandi.github.io/cgx/) · [**Documentation**](docs/) · [**Discord**](https://discord.gg/cgx)
+[**Live Demo**](https://aayushbahukhandi.github.io/cgx/) · [**Documentation**](docs/) · [**Releases**](https://github.com/AayushBahukhandi/cgx/releases)
 
 </div>
 
@@ -55,7 +54,8 @@ cgx hotspots
 
 | Feature | Description |
 |---|---|
-| **AST Parsing** | Tree-sitter parses TS, JS, Python, Rust, Go, Java in parallel |
+| **AST Parsing** | Tree-sitter parses TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP in parallel |
+| **JSX Caller Tracking** | React component usages (`<MyComp />`) are tracked as call edges |
 | **Git Intelligence** | Churn scores, co-change edges, ownership — the temporal graph |
 | **DuckDB Storage** | Zero-server embedded graph database. Instant queries. |
 | **Community Detection** | Leiden algorithm auto-clusters your codebase into modules |
@@ -64,30 +64,15 @@ cgx hotspots
 | **AI Chat** | Ask questions about your code in natural language. Ollama supported. |
 | **MCP Server** | 10 typed tools for Cursor, Claude Code, Windsurf |
 | **Skills System** | `CGX_SKILL.md` auto-generated — works in any AI assistant |
-| **GitHub Pages** | One command publishes your architecture graph publicly |
+| **Share Links** | `cgx share` uploads your graph to a Gist — anyone views it in a browser, no install needed |
+| **GitHub Pages Publish** | `cgx publish` pushes a self-contained graph site to your `gh-pages` branch |
 | **Graph Diff** | See how your architecture changed between commits |
 | **Dead Code Detection** | Find unreferenced exports across the whole codebase |
+| **Self-contained binary** | Web UI is embedded in the binary — Homebrew and `cargo install` work out of the box |
 
 ---
 
 ## Installation
-
-### Homebrew (macOS / Linux)
-
-> **Coming soon.** We do not yet have a Homebrew formula. See [below](#setting-up-distribution) for how to create one.
-
-Once published, installation will be:
-
-```bash
-# Add the tap (one-time)
-brew tap AayushBahukhandi/cgx https://github.com/AayushBahukhandi/homebrew-cgx
-
-# Install cgx
-brew install cgx
-
-# Update later
-brew upgrade cgx
-```
 
 ### cargo
 
@@ -95,7 +80,7 @@ brew upgrade cgx
 cargo install cgx-cli
 ```
 
-The installed binary is named `cgx`. If `cgx --version` prints `command not found`, add Cargo's bin directory to your shell PATH, then restart your terminal:
+The installed binary is named `cgx`. If `cgx --version` prints `command not found`, add Cargo's bin directory to your PATH:
 
 ```bash
 # zsh (~/.zshrc) or bash (~/.bashrc / ~/.bash_profile)
@@ -107,25 +92,37 @@ export PATH="$HOME/.cargo/bin:$PATH"
 fish_add_path "$HOME/.cargo/bin"
 ```
 
-> **How cargo updates work:** New versions are published to [crates.io](https://crates.io/crates/cgx-cli) on every release tag. Run `cargo install cgx-cli` again to update. Note: `cargo install` compiles from source, so it may take a few minutes.
+> `cargo install` compiles from source and may take a few minutes. Run it again to update.
 
 ### Pre-built binary (Windows, macOS, Linux)
 
 Download from [GitHub Releases](https://github.com/AayushBahukhandi/cgx/releases/latest).
 
 ```bash
-# macOS / Linux example:
-curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.0-x86_64-apple-darwin.tar.gz | tar xz
+# macOS arm64 (Apple Silicon)
+curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.3-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv cgx /usr/local/bin/
+
+# macOS x86_64 (Intel)
+curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.3-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv cgx /usr/local/bin/
+
+# Linux x86_64
+curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.3-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv cgx /usr/local/bin/
 ```
 
-> **How binary updates work:** Download the latest `.tar.gz` or `.zip` for your platform from GitHub Releases, extract, and replace the binary. The `cgx update` command will remind you where to look and can auto-detect your install method.
+Windows users: download the `.zip` from the releases page and place `cgx.exe` in a directory on your `%PATH%`.
+
+### Homebrew (macOS / Linux)
+
+> **Coming soon.** A tap is planned. Until then use `cargo install cgx-cli` or the pre-built binary above.
 
 ### Verify
 
 ```bash
-cgx --version
-cgx doctor    # checks your setup and editor integrations
+cgx --version   # should print 0.1.3
+cgx doctor      # checks your setup and editor integrations
 ```
 
 ---
@@ -133,15 +130,15 @@ cgx doctor    # checks your setup and editor integrations
 ## Quick Start
 
 ```bash
-# 1. Index your repo (run once, then auto-updates on every commit)
+# 1. Index your repo
 cd your-project
 cgx analyze
 
-# 2. Explore in the terminal
-cgx view
-
-# 3. Explore in the browser
+# 2. Open the browser graph (auto-analyzes if not indexed yet)
 cgx view --web
+
+# 3. Share with anyone — no install required on their end
+cgx share
 
 # 4. See your riskiest files
 cgx hotspots
@@ -150,48 +147,11 @@ cgx hotspots
 cgx setup
 ```
 
-That's it. After `cgx analyze`, two files appear in your repo root:
-- `CGX_SKILL.md` — your AI assistant reads this and queries the graph instead of files
-- `AGENTS.md` — a prose architecture summary of your codebase
+After `cgx analyze`, two files appear in your repo root:
+- `CGX_SKILL.md` — tells your AI assistant how to query the graph instead of reading files
+- `AGENTS.md` — a prose architecture summary: communities, hotspots, entry points, god nodes
 
-Both update automatically on every git commit via installed hooks.
-
----
-
-## Updating cgx
-
-We ship updates on three channels. Pick the one that matches how you installed:
-
-| Install method | Update command | Notes |
-|---|---|---|
-| **Homebrew** | `brew upgrade cgx` | Fastest. Pulls pre-built binary + web UI. |
-| **cargo** | `cargo install cgx-cli` | Compiles from source. Takes a few minutes. |
-| **Binary** | `cgx update --auto` | Detects install path and tells you what to do. |
-
-**Our release flow:**
-1. We tag a release (`git tag v0.2.0 && git push origin v0.2.0`).
-2. GitHub Actions builds binaries for all platforms, publishes to crates.io, and drafts a release.
-3. The Homebrew formula is updated with new SHA256 hashes.
-4. You get the update via your chosen channel within minutes.
-
----
-
-## Demo
-
-### Terminal TUI — `cgx view`
-
-<!-- TODO: record docs/tui-demo.gif -->
-<img src="docs/tui-demo.gif" alt="cgx terminal TUI" width="100%" />
-
-### WebGL Browser Graph — `cgx view --web`
-
-<!-- TODO: add docs/web-demo.png -->
-<img src="docs/web-demo.png" alt="cgx browser graph" width="100%" />
-
-### AI Chat — built into the browser UI
-
-<!-- TODO: add docs/chat-demo.png -->
-<img src="docs/chat-demo.png" alt="cgx AI chat" width="100%" />
+Both regenerate automatically on every `git commit` via installed hooks.
 
 ---
 
@@ -202,34 +162,56 @@ We ship updates on three channels. Pick the one that matches how you installed:
 ```bash
 cgx analyze                    # index current repo
 cgx analyze ./path             # index any local path
-cgx analyze github:owner/repo  # clone + index remote
 cgx analyze --watch            # live-reload on file save
 cgx analyze --incremental      # re-parse only changed files (used by git hooks)
 cgx analyze --no-git           # skip git history layer
 cgx analyze --force            # full clean re-index
 ```
 
-### Query Your Codebase
+### Visualize
 
 ```bash
-# Find any symbol
-cgx query find "AuthService"
-cgx query find "login" --kind=Function
+cgx view                       # terminal TUI (works over SSH)
+cgx view --web                 # browser WebGL graph — auto-analyzes if not indexed
+cgx view --community=3         # scope TUI view to a cluster
+```
 
-# Know the blast radius before you touch anything
-cgx query blast-radius "deleteUser"
+> In the terminal TUI, press `e` on a selected node to view its ego-graph (neighbors up to 2 hops).
 
-# Trace a call chain
-cgx query chain "Router.handleLogin -> db.query"
+### Share
 
-# Find dead code
-cgx query dead-code
+```bash
+cgx share                      # upload graph to a GitHub Gist → hosted viewer URL
+cgx share --token ghp_xxx      # use a specific GitHub token
+cgx share --public             # make the Gist public (default: secret)
+```
 
-# Full-text search
-cgx query search "session management"
+`cgx share` requires a GitHub token with `gist` scope. It uses (in order): `--token`, `GITHUB_TOKEN` env var, or `gh auth token` if you have the GitHub CLI installed.
 
-# Who owns a file
-cgx query owners src/payments/
+The returned URL looks like:
+```
+https://aayushbahukhandi.github.io/cgx/?data=https://gist.githubusercontent.com/...
+```
+Anyone can open that link in a browser — no cgx install needed.
+
+### Publish to GitHub Pages
+
+```bash
+cgx publish                    # push self-contained graph site to gh-pages branch
+cgx publish --dry-run          # preview what would be pushed
+cgx publish --badge            # print README badge markdown
+```
+
+### Query
+
+```bash
+cgx query find "AuthService"            # locate any symbol
+cgx query find "login" --kind=Function  # filter by kind
+cgx query blast-radius "deleteUser"     # what breaks if this changes?
+cgx query chain "Router.handleLogin"    # trace a call chain
+cgx query dead-code                     # unreferenced exports
+cgx query search "session management"  # full-text search
+cgx query owners src/payments/          # git blame ownership
 ```
 
 ### Git Intelligence
@@ -237,45 +219,25 @@ cgx query owners src/payments/
 ```bash
 cgx hotspots                   # high churn × high coupling = danger zone
 cgx blame-graph                # ownership by contributor
-cgx impact --since=7d          # what changed + downstream ripple
 cgx diff HEAD~5                # architecture diff between commits
 ```
-
-### Visualize
-
-```bash
-cgx view                       # terminal TUI (works over SSH)
-cgx view --web                 # WebGL browser graph
-cgx view --community=3         # scope to a cluster
-```
-
-> **Tip:** In the terminal TUI, press `e` on a selected node to view its ego-graph (neighbors up to 2 hops).
 
 ### Export
 
 ```bash
-cgx export --format=json       # full graph JSON (machine-readable)
+cgx export --format=json       # full graph JSON
 cgx export --format=mermaid    # paste into any README
-cgx export --format=svg        # static diagram
 cgx export --format=graphml    # import into Gephi / yEd
-```
-
-### Publish to GitHub Pages
-
-```bash
-cgx publish                    # push self-contained graph to gh-pages
-cgx publish --dry-run          # preview without pushing
-cgx publish --badge            # get README badge markdown
 ```
 
 ### Maintenance
 
 ```bash
+cgx summary                    # repo stats: nodes, edges, languages, communities
 cgx doctor                     # run diagnostics on your install
 cgx clean                      # remove indexed data for current repo
 cgx clean --all                # remove ALL indexed repos
-cgx update                     # show update instructions
-cgx update --auto              # auto-update (cargo / homebrew only)
+cgx status                     # show index status for registered repos
 ```
 
 ---
@@ -326,60 +288,29 @@ under 3,000 tokens — then writes the code knowing exactly what it needs to upd
 ## AI Chat
 
 The browser UI (`cgx view --web`) includes a built-in chat panel.
-Ask natural language questions about your codebase. Answers come from
-the pre-analyzed graph — no raw file reading, no hallucination about structure.
-
-```
-You: What are the riskiest files to change right now?
-
-cgx: Based on the graph, your top 3 danger zones are:
-
-  1. src/db/pool.ts — churn 0.92, 31 callers
-     Changed in 47 of the last 90 commits. Everything in the
-     db-layer community depends on it. Any change here has a
-     blast radius of 89 nodes.
-
-  2. src/auth/service.ts — churn 0.87, 14 callers
-     Co-changes with db/pool.ts in 31 commits (hidden coupling).
-     Alice owns 73% of this file by blame.
-
-  3. src/api/router.ts — churn 0.71, 22 callers
-     Entry point for all HTTP traffic. High in-degree.
-```
+Ask natural language questions about your codebase.
 
 ### Supported AI Providers
 
-cgx chat works with any of these. Pick what you have.
-
-#### OpenAI (GPT-4o-mini recommended)
+#### OpenAI
 ```bash
 export OPENAI_API_KEY=sk-...
 cgx serve
 ```
 
-#### Anthropic (Claude Haiku recommended)
+#### Anthropic
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 export CGX_CHAT_PROVIDER=anthropic
-export CGX_CHAT_MODEL=claude-haiku-4-5   # fast + cheap
+export CGX_CHAT_MODEL=claude-haiku-4-5
 cgx serve
 ```
 
-#### Ollama (fully local, no API key needed)
+#### Ollama (fully local, no API key)
 ```bash
-# 1. Install Ollama: https://ollama.ai
-# 2. Pull a model
-ollama pull llama3.2        # good all-rounder
-ollama pull codellama       # tuned for code
-ollama pull deepseek-coder  # excellent for code Q&A
-
-# 3. Start cgx — it auto-detects Ollama if running
-cgx serve
-
-# Or specify explicitly:
+ollama pull codellama
 export CGX_CHAT_PROVIDER=ollama
 export CGX_CHAT_MODEL=codellama
-export CGX_OLLAMA_HOST=http://localhost:11434   # default, change if needed
 cgx serve
 ```
 
@@ -392,40 +323,9 @@ export CGX_CHAT_MODEL=meta-llama/Llama-3-70b-chat-hf
 cgx serve
 ```
 
-Works with Together AI, Fireworks AI, Groq, Mistral, LM Studio,
-and any other provider that speaks the OpenAI API format.
-
-#### Provider comparison
-
-| Provider | Speed | Cost | Privacy | Best model for code |
-|---|---|---|---|---|
-| OpenAI | Fast | ~$0.001/q | Cloud | gpt-4o-mini |
-| Anthropic | Fast | ~$0.001/q | Cloud | claude-haiku-4-5 |
-| Ollama | Medium | Free | 100% local | codellama, deepseek-coder |
-| OpenAI-compatible | Varies | Varies | Varies | depends on provider |
-
 > **Privacy note:** cgx chat sends only graph metadata to the AI — node names,
 > file paths, churn scores, community labels. It never sends your source code.
 > With Ollama, nothing leaves your machine.
-
----
-
-## How Token Savings Work
-
-Traditional approach — AI reads files:
-```
-"What calls AuthService?" → AI opens 8 files → 42,000 tokens → $0.04
-```
-
-cgx approach — AI queries the graph:
-```
-"What calls AuthService?" → cgx query find AuthService → 180 tokens → $0.0002
-```
-
-**The CGX_SKILL.md file is the key.** It's generated after every `cgx analyze`
-and baked with your live codebase stats. When your AI reads it at session start,
-it already knows your hotspots, communities, and entry points — before asking
-a single question. That collapses 5-10 exploratory queries into zero.
 
 ---
 
@@ -435,31 +335,13 @@ Every other codebase analysis tool only knows the **structural graph** —
 what imports what right now. cgx also builds the **temporal graph** from
 your git history.
 
-The temporal graph reveals things static analysis cannot:
-
 **Co-change edges** — files that always change together in commits,
-even if they don't import each other. Hidden coupling. The source of
-"why did this unrelated thing break?"
-
-```bash
-cgx export --format=json | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-co = sorted([e for e in d['edges'] if e['kind']=='CO_CHANGES'],
-            key=lambda x: -x['weight'])
-for e in co[:5]:
-    print(f'{e[\"src\"]} <-> {e[\"dst\"]}  co-changed {int(e[\"weight\"]*100)}% of the time')
-"
-# src/auth/service.ts <-> src/db/pool.ts  co-changed 89% of the time
-# But they don't import each other. That's the hidden coupling.
-```
+even if they don't import each other. Hidden coupling.
 
 **Churn scores** — how frequently each node changes, normalized 0–1.
-Combined with coupling (in-degree), this gives you the hotspot score.
-Files that change often AND have many dependents are your landmines.
+Combined with in-degree, this gives you the hotspot score.
 
-**Ownership** — who owns what, by git blame line count. Answers
-"who do I talk to before changing this?" without asking in Slack.
+**Ownership** — who owns what, by git blame line count.
 
 ---
 
@@ -468,6 +350,7 @@ Files that change often AND have many dependents are your landmines.
 |  | cgx | GitNexus | Graphify |
 |---|---|---|---|
 | Tree-sitter parsing | ✅ | ✅ | ✅ |
+| JSX/TSX caller tracking | ✅ | ❌ | ❌ |
 | Cross-file resolution | ✅ | ✅ | ❌ |
 | Git history (churn/blame) | ✅ | ❌ | ❌ |
 | Co-change graph | ✅ | ❌ | ❌ |
@@ -478,8 +361,9 @@ Files that change often AND have many dependents are your landmines.
 | Ollama / local LLM | ✅ | ❌ | ❌ |
 | MCP server | ✅ | ✅ | ❌ |
 | Skills system | ✅ | ❌ | ✅ |
+| Share links (no install) | ✅ | ❌ | ❌ |
 | GitHub Pages publish | ✅ | ❌ | ❌ |
-| Graph diff between commits | ✅ | ❌ | ❌ |
+| Self-contained binary | ✅ | ❌ | ❌ |
 | LLM required for indexing | ❌ Never | ❌ Never | ✅ Always |
 | License | MIT | Non-commercial | MIT |
 
@@ -495,13 +379,13 @@ Files that change often AND have many dependents are your landmines.
 | Rust | tree-sitter-rust | ✅ Stable |
 | Go | tree-sitter-go | ✅ Stable |
 | Java | tree-sitter-java | ✅ Stable |
-| C / C++ | tree-sitter-c/cpp | 📋 Planned |
-| C# | tree-sitter-java (fallback) | 🔧 Beta |
 | PHP | tree-sitter-php | ✅ Stable |
-| Swift | tree-sitter-swift | 📋 Planned |
-| Ruby | tree-sitter-ruby | 📋 Planned |
+| C# | tree-sitter-java (fallback) | 🔧 Beta |
+| C / C++ | — | 📋 Planned |
+| Swift | — | 📋 Planned |
+| Ruby | — | 📋 Planned |
 
-Want a language added? [Open an issue](https://github.com/AayushBahukhandi/cgx/issues/new?template=language-request.md) or submit a PR — new parsers are one file in `crates/cgx-core/src/parsers/`.
+Want a language added? [Open an issue](https://github.com/AayushBahukhandi/cgx/issues/new) or submit a PR — new parsers are one file in `crates/cgx-engine/src/parsers/`.
 
 ---
 
@@ -528,26 +412,15 @@ co_change_threshold = 2
 [chat]
 # Default provider (openai | anthropic | ollama | openai-compatible)
 provider = "ollama"
-
-# Default model
 model = "codellama"
-
-# Ollama host (if not localhost)
 ollama_host = "http://localhost:11434"
 
 [serve]
-# HTTP server port
 port = 7373
-
-# Open browser automatically on cgx view --web
 auto_open = true
 
 [skill]
-# Regenerate CGX_SKILL.md on every analyze (default: true)
 auto_generate = true
-
-# Include token budget table in skill file
-include_token_budget = true
 ```
 
 ---
@@ -557,15 +430,16 @@ include_token_budget = true
 cgx is built in Rust (core engine) and TypeScript (web UI).
 
 ```
-cgx-core    — Tree-sitter parsing, DuckDB storage, git analysis,
+cgx-engine  — Tree-sitter parsing, DuckDB storage, git analysis,
               Leiden clustering, export, skill generation
-cgx-cli     — All user-facing commands, TUI (Ratatui), HTTP server (Axum)
+cgx-cli     — All user-facing commands, TUI (Ratatui), HTTP server (Axum),
+              web UI embedded via rust-embed (self-contained binary)
 cgx-mcp     — MCP stdio server (JSON-RPC 2.0)
 web-ui      — Vite + React + Sigma.js WebGL graph
 ```
 
 The graph is stored locally at `~/.cgx/repos/<hash>.db` — one DuckDB file
-per repo. No external services, no cloud, no network required.
+per repo. No external services, no cloud, no network required for local use.
 
 ---
 
@@ -581,14 +455,14 @@ npm install && npm run build
 
 # Run tests
 cargo test --workspace
-./scripts/integration-test.sh
 
 # Lint
 cargo clippy --workspace -- -D warnings -D clippy::unwrap_used
+cargo fmt --all
 ```
 
 **Best places to contribute:**
-- New language parsers — one file in `crates/cgx-core/src/parsers/`
+- New language parsers — one file in `crates/cgx-engine/src/parsers/`
 - New export formats
 - TUI improvements
 - Web UI features
@@ -599,11 +473,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## Roadmap
 
+- [ ] Homebrew formula + tap
 - [ ] `cgx changelog` — generate changelogs from graph diffs
 - [ ] VS Code extension
 - [ ] `cgx watch` with debounced incremental indexing
 - [ ] Mermaid diagram auto-commit to docs/ on every push (GitHub Action)
-- [ ] Ruby, Swift, PHP parsers
+- [ ] Ruby, Swift, C/C++ parsers
 - [ ] `cgx init` — guided first-run experience
 - [ ] cgx cloud — shared graphs for teams (hosted)
 
@@ -611,92 +486,27 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## Setting Up Distribution
 
-If you are publishing this project, here is how to set up `cargo` and `brew` distribution.
+### crates.io
 
-### crates.io (cargo install)
+1. Set the `CARGO_REGISTRY_TOKEN` secret in your GitHub repo settings.
+2. The release workflow (`.github/workflows/release.yml`) publishes all three crates automatically on every `v*` tag.
+3. Users install with `cargo install cgx-cli`.
 
-1. **Claim the crate names** (one-time):
-   ```bash
-   cargo publish --package cgx-core --dry-run
-   cargo publish --package cgx-mcp --dry-run
-   cargo publish --package cgx-cli --dry-run
-   ```
+### GitHub Pages (hosted viewer)
 
-2. **Set the `CARGO_REGISTRY_TOKEN` secret** in your GitHub repo settings.
-   The release workflow (`.github/workflows/release.yml`) publishes automatically on every tag.
+Already live at `https://aayushbahukhandi.github.io/cgx/`. The `deploy-pages.yml` workflow rebuilds and redeploys it on every release tag automatically.
 
-3. **Update `Cargo.toml` author fields**:
-   Replace `aayush bahukhandi <aayushpotter555@gmail.com>` in all `Cargo.toml` files with your real name/email.
+### Homebrew
 
-4. **Users install with:**
-   ```bash
-   cargo install cgx-cli
-   ```
-   If `cgx` is not found after installation, users must add Cargo's bin directory to their PATH:
-   ```bash
-   export PATH="$HOME/.cargo/bin:$PATH"
-   ```
+A tap requires a separate `homebrew-cgx` repo. After the first release builds, get the SHA256 hashes:
 
-### Homebrew (brew install)
-
-There is no Homebrew formula in this repo yet. You need a separate tap repository.
-
-**Step 1 — Create a tap repo:**
 ```bash
-# Create a new public repo: github.com/AayushBahukhandi/homebrew-cgx
-git clone https://github.com/AayushBahukhandi/homebrew-cgx.git
-cd homebrew-cgx
+shasum -a 256 cgx-v0.1.3-aarch64-apple-darwin.tar.gz
+shasum -a 256 cgx-v0.1.3-x86_64-apple-darwin.tar.gz
+shasum -a 256 cgx-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
 ```
 
-**Step 2 — Create the formula** (`Formula/cgx.rb`):
-```ruby
-class Cgx < Formula
-  desc "Turn any Git repository into a queryable knowledge graph"
-  homepage "https://github.com/AayushBahukhandi/cgx"
-  version "0.1.0"
-
-  on_macos do
-    if Hardware::CPU.arm?
-      url "https://github.com/AayushBahukhandi/cgx/releases/download/v#{version}/cgx-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "SHA256_OF_ARM64_BINARY"
-    else
-      url "https://github.com/AayushBahukhandi/cgx/releases/download/v#{version}/cgx-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "SHA256_OF_X86_64_BINARY"
-    end
-  end
-
-  on_linux do
-    url "https://github.com/AayushBahukhandi/cgx/releases/download/v#{version}/cgx-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "SHA256_OF_LINUX_BINARY"
-  end
-
-  def install
-    bin.install "cgx"
-    # Install bundled web UI assets
-    pkgshare.install "web-ui" if File.directory?("web-ui")
-  end
-
-  test do
-    system "#{bin}/cgx", "--version"
-  end
-end
-```
-
-**Step 3 — Get SHA256 hashes:**
-After your first GitHub Release is published, download each tarball and run:
-```bash
-shasum -a 256 cgx-v0.1.0-aarch64-apple-darwin.tar.gz
-```
-Paste the hashes into the formula and commit.
-
-**Step 4 — Users install with:**
-```bash
-brew tap AayushBahukhandi/cgx
-brew install cgx
-```
-
-**Automating updates:**
-You can automate Step 3 with a GitHub Action in the `homebrew-cgx` repo that listens for release webhooks and opens a PR with updated SHA256s.
+Then create `Formula/cgx.rb` in `homebrew-cgx` pointing at the release tarballs with those hashes.
 
 ---
 
