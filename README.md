@@ -95,6 +95,18 @@ brew upgrade cgx
 cargo install cgx-cli
 ```
 
+The installed binary is named `cgx`. If `cgx --version` prints `command not found`, add Cargo's bin directory to your shell PATH, then restart your terminal:
+
+```bash
+# zsh (~/.zshrc) or bash (~/.bashrc / ~/.bash_profile)
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+```fish
+# fish (~/.config/fish/config.fish)
+fish_add_path "$HOME/.cargo/bin"
+```
+
 > **How cargo updates work:** New versions are published to [crates.io](https://crates.io/crates/cgx-cli) on every release tag. Run `cargo install cgx-cli` again to update. Note: `cargo install` compiles from source, so it may take a few minutes.
 
 ### Pre-built binary (Windows, macOS, Linux)
@@ -619,6 +631,10 @@ If you are publishing this project, here is how to set up `cargo` and `brew` dis
 4. **Users install with:**
    ```bash
    cargo install cgx-cli
+   ```
+   If `cgx` is not found after installation, users must add Cargo's bin directory to their PATH:
+   ```bash
+   export PATH="$HOME/.cargo/bin:$PATH"
    ```
 
 ### Homebrew (brew install)

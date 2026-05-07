@@ -8,7 +8,17 @@ Command-line interface for [cgx](https://github.com/AayushBahukhandi/cgx) — tu
 cargo install cgx-cli
 ```
 
-The binary is named `cgx`.
+The binary is named `cgx`. If `cgx --version` prints `command not found`, add Cargo's bin directory to your shell PATH, then restart your terminal:
+
+```bash
+# zsh (~/.zshrc) or bash (~/.bashrc / ~/.bash_profile)
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+```fish
+# fish (~/.config/fish/config.fish)
+fish_add_path "$HOME/.cargo/bin"
+```
 
 ## Quick Start
 

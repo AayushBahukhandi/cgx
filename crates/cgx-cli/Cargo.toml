@@ -31,7 +31,7 @@ fdg-sim = "0.9"
 axum = "0.7"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 open = "5"
-git2 = "0.18"
+git2 = { version = "0.18", features = ["vendored-openssl"] }
 tokio = { version = "1", features = ["full"] }
 async-stream = "0.3"
 tokio-stream = { version = "0.1", features = ["io-util"] }
