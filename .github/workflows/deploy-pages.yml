@@ -15,6 +15,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install C++ build tools
+        run: sudo apt-get update -qq && sudo apt-get install -y build-essential g++ cmake
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,6 +40,29 @@ jobs:
 
       - name: Install dependencies and build web UI
         run: npm ci && npm run build
+
+      - name: Build cgx binary
+        run: cargo build --package cgx-cli --release --locked
+
+      - name: Analyze cgx repo itself
+        run: ./target/release/cgx analyze .
+
+      - name: Export graph JSON
+        run: ./target/release/cgx export --format json --out /tmp/cgx-graph.json .
+
+      - name: Inject graph data into index.html
+        run: |
+          node -e "
+            const fs = require('fs');
+            const graph = fs.readFileSync('/tmp/cgx-graph.json', 'utf8');
+            let html = fs.readFileSync('packages/web-ui/dist/index.html', 'utf8');
+            const script = '<script>window.__CGX_GRAPH__ = ' + graph + ';</script>';
+            html = html.includes('</head>')
+              ? html.replace('</head>', script + '</head>')
+              : html.replace('</body>', script + '</body>');
+            fs.writeFileSync('packages/web-ui/dist/index.html', html);
+            console.log('Injected graph data into index.html');
+          "
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
