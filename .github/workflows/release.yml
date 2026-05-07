@@ -139,3 +139,91 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute SHA256 hashes
+        id: sha
+        run: |
+          VERSION=${{ github.ref_name }}
+          DARWIN_ARM=$(sha256sum artifacts/cgx-${VERSION}-aarch64-apple-darwin.tar.gz | awk '{print $1}')
+          DARWIN_INTEL=$(sha256sum artifacts/cgx-${VERSION}-x86_64-apple-darwin.tar.gz | awk '{print $1}')
+          LINUX_INTEL=$(sha256sum artifacts/cgx-${VERSION}-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')
+          echo "darwin_arm=$DARWIN_ARM" >> $GITHUB_OUTPUT
+          echo "darwin_intel=$DARWIN_INTEL" >> $GITHUB_OUTPUT
+          echo "linux_intel=$LINUX_INTEL" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: AayushBahukhandi/homebrew-cgx
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          VERSION=${{ github.ref_name }}
+          cat > homebrew-tap/Formula/cgx.rb << EOF
+          class Cgx < Formula
+            desc "Turn any Git repository into a queryable knowledge graph"
+            homepage "https://github.com/AayushBahukhandi/cgx"
+            version "${VERSION#v}"
+            license "MIT"
+
+            if OS.mac? && Hardware::CPU.arm?
+              url "https://github.com/AayushBahukhandi/cgx/releases/download/${VERSION}/cgx-${VERSION}-aarch64-apple-darwin.tar.gz"
+              sha256 "${{ steps.sha.outputs.darwin_arm }}"
+            elsif OS.mac? && Hardware::CPU.intel?
+              url "https://github.com/AayushBahukhandi/cgx/releases/download/${VERSION}/cgx-${VERSION}-x86_64-apple-darwin.tar.gz"
+              sha256 "${{ steps.sha.outputs.darwin_intel }}"
+            elsif OS.linux? && Hardware::CPU.intel?
+              url "https://github.com/AayushBahukhandi/cgx/releases/download/${VERSION}/cgx-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${{ steps.sha.outputs.linux_intel }}"
+            end
+
+            def install
+              bin.install "cgx"
+              pkgshare.install "web-ui"
+            end
+
+            def caveats
+              <<~EOS
+                cgx has been installed.
+
+                Quick start:
+                  cd your-project
+                  cgx analyze
+                  cgx view --web
+
+                For AI editor integration:
+                  cgx setup
+
+                To check your installation:
+                  cgx doctor
+              EOS
+            end
+
+            test do
+              system "#{bin}/cgx", "--version"
+            end
+          end
+          EOF
+
+      - name: Commit and push formula update
+        run: |
+          VERSION=${{ github.ref_name }}
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/cgx.rb
+          git commit -m "cgx ${VERSION}"
+          git push
