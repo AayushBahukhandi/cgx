@@ -121,21 +121,27 @@ jobs:
           key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Publish cgx-engine
-        run: cargo publish --package cgx-engine --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --package cgx-engine --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         continue-on-error: true
 
       - name: Wait for cgx-engine to be indexed
         run: sleep 30
 
       - name: Publish cgx-mcp
-        run: cargo publish --package cgx-mcp --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --package cgx-mcp --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         continue-on-error: true
 
       - name: Wait for cgx-mcp to be indexed
         run: sleep 30
 
       - name: Publish cgx-cli
-        run: cargo publish --package cgx-cli --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --package cgx-cli --locked --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         continue-on-error: true
 
   release:
