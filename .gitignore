@@ -6,4 +6,3 @@ node_modules/
 ~/.cgx/
 .claude/
 .gstack/
-crates/cgx-cli/web-ui-dist/
