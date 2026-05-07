@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   build:
@@ -22,9 +23,9 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-26-intel
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-26
           - target: x86_64-pc-windows-msvc
             os: windows-latest
 
@@ -94,7 +95,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Publish cgx-engine
