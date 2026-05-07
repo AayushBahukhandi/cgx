@@ -46,6 +46,14 @@ jobs:
       - name: Install dependencies and build web UI
         run: npm ci && npm run build
 
+      - name: Copy web UI into crate for embedding (Unix)
+        if: matrix.os != 'windows-latest'
+        run: cp -r packages/web-ui/dist crates/cgx-cli/web-ui-dist
+
+      - name: Copy web UI into crate for embedding (Windows)
+        if: matrix.os == 'windows-latest'
+        run: Copy-Item -Recurse packages/web-ui/dist crates/cgx-cli/web-ui-dist
+
       - name: Build binary (Unix)
         if: matrix.os != 'windows-latest'
         run: cargo build --workspace --release --locked --target ${{ matrix.target }}

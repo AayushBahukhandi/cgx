@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies and build web UI
         run: npm ci && npm run build
 
+      - name: Copy web UI into crate for embedding
+        run: cp -r packages/web-ui/dist crates/cgx-cli/web-ui-dist
+
       - name: Build cgx binary
         run: cargo build --package cgx-cli --release --locked
 

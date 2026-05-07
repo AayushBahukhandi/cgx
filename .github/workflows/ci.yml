@@ -125,11 +125,13 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Build web UI and copy into crate for embedding
+        run: |
+          npm ci && npm run build
+          cp -r packages/web-ui/dist crates/cgx-cli/web-ui-dist
+
       - name: Build release binary
         run: cargo build --workspace --release --locked
-
-      - name: Install web UI
-        run: npm ci && npm run build
 
       - name: Run integration tests
         run: ./scripts/integration-test.sh
