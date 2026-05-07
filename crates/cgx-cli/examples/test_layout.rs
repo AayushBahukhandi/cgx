@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use cgx_engine::{GraphDb, Node, Edge};
+use cgx_engine::{Edge, GraphDb, Node};
 
 fn main() {
     let repo_path = Path::new("/Users/aayush/Developer/codegraph");
@@ -30,7 +30,8 @@ fn main() {
     println!("Total nodes: {}, edges: {}", nodes.len(), edges.len());
 
     // Breakdown by kind
-    let mut kind_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut kind_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for n in &nodes {
         *kind_counts.entry(n.kind.clone()).or_default() += 1;
     }
@@ -42,7 +43,8 @@ fn main() {
     }
 
     // Breakdown by edge kind
-    let mut edge_kind_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut edge_kind_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for e in &edges {
         *edge_kind_counts.entry(e.kind.clone()).or_default() += 1;
     }

@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// cgx configuration — loaded from `.cgx/config.toml` in the repo root
 /// or `~/.cgx/config.toml` for global defaults.

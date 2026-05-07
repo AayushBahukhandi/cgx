@@ -17,7 +17,7 @@ export function useGraph() {
 
     async function load() {
       try {
-        // Priority 1: baked-in graph data (publish mode)
+        // Priority 1: baked-in graph data (cgx publish static mode)
         if (window.__CGX_GRAPH__) {
           if (!cancelled) {
             setData(window.__CGX_GRAPH__);
@@ -26,7 +26,22 @@ export function useGraph() {
           return;
         }
 
-        // Priority 2: fetch from API
+        // Priority 2: ?data=URL param (cgx share mode — load from remote JSON)
+        const params = new URLSearchParams(window.location.search);
+        const remoteUrl = params.get("data");
+        if (remoteUrl) {
+          const resp = await fetch(remoteUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+          const json: GraphData | { error: string } = await resp.json();
+          if (!cancelled) {
+            if ("error" in json) throw new Error((json as { error: string }).error);
+            setData(json as GraphData);
+            setLoading(false);
+          }
+          return;
+        }
+
+        // Priority 3: fetch from local API (cgx serve mode)
         const resp = await fetch("/api/graph");
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);

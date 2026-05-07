@@ -29,10 +29,8 @@ pub fn resolve(
     }
 
     // Create file node IDs we know about
-    let known_file_ids: HashSet<String> = file_paths
-        .iter()
-        .map(|p| format!("file:{}", p))
-        .collect();
+    let known_file_ids: HashSet<String> =
+        file_paths.iter().map(|p| format!("file:{}", p)).collect();
 
     // Process all edges
     for edge in edges {
@@ -40,8 +38,8 @@ pub fn resolve(
             EdgeKind::Imports => {
                 // src = file:<current_file>, dst = file:<imported_file>
                 // Check if dst is a valid file ID, or try to resolve it
-                let dst_is_valid = node_ids.contains(edge.dst.as_str())
-                    || known_file_ids.contains(&edge.dst);
+                let dst_is_valid =
+                    node_ids.contains(edge.dst.as_str()) || known_file_ids.contains(&edge.dst);
 
                 if dst_is_valid {
                     resolved_edges.push(EdgeDef {
@@ -137,10 +135,7 @@ pub fn create_file_nodes(
 
     for path in file_paths {
         let id = format!("file:{}", path);
-        let _lang = language
-            .get(path.as_str())
-            .copied()
-            .unwrap_or("unknown");
+        let _lang = language.get(path.as_str()).copied().unwrap_or("unknown");
 
         nodes.push(NodeDef {
             id,
@@ -156,9 +151,7 @@ pub fn create_file_nodes(
     nodes
 }
 
-pub fn build_language_map(
-    nodes: &[NodeDef],
-) -> HashMap<String, &'static str> {
+pub fn build_language_map(nodes: &[NodeDef]) -> HashMap<String, &'static str> {
     let mut map = HashMap::new();
     for node in nodes {
         let lang = match node.id.split(':').next().unwrap_or("") {

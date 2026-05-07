@@ -30,9 +30,9 @@ impl LanguageParser for PythonParser {
         let mut parser = Parser::new();
         parser.set_language(&self.language)?;
 
-        let tree = parser.parse(&file.content, None).ok_or_else(|| {
-            anyhow::anyhow!("failed to parse {}", file.relative_path)
-        })?;
+        let tree = parser
+            .parse(&file.content, None)
+            .ok_or_else(|| anyhow::anyhow!("failed to parse {}", file.relative_path))?;
 
         let source_bytes = file.content.as_bytes();
         let root = tree.root_node();
@@ -57,7 +57,9 @@ impl LanguageParser for PythonParser {
                 };
                 let name = node_text(name_capture.node, source_bytes);
                 let start = name_capture.node.start_position();
-                let body_end = m.captures.iter()
+                let body_end = m
+                    .captures
+                    .iter()
                     .find(|c| query.capture_names()[c.index as usize] == "fn")
                     .map(|c| c.node.end_position())
                     .unwrap_or_else(|| name_capture.node.end_position());
@@ -98,7 +100,9 @@ impl LanguageParser for PythonParser {
                 };
                 let name = node_text(name_capture.node, source_bytes);
                 let start = name_capture.node.start_position();
-                let body_end = m.captures.iter()
+                let body_end = m
+                    .captures
+                    .iter()
                     .find(|c| query.capture_names()[c.index as usize] == "cls")
                     .map(|c| c.node.end_position())
                     .unwrap_or_else(|| name_capture.node.end_position());
@@ -196,7 +200,7 @@ fn resolve_py_import(current_file: &str, module_name: &str) -> String {
         let remainder = &module_name[dot_count..];
         let mut parts: Vec<&str> = current_file.split('/').collect();
         parts.pop(); // remove filename
-        // `.` = 0 extra pops, `..` = 1 extra pop, `...` = 2 extra pops
+                     // `.` = 0 extra pops, `..` = 1 extra pop, `...` = 2 extra pops
         let up_count = dot_count.saturating_sub(1);
         for _ in 0..up_count {
             parts.pop();

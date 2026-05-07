@@ -1,4 +1,4 @@
-use tree_sitter::{Parser, Query, QueryCursor, Node};
+use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
 use crate::walker::SourceFile;
@@ -30,9 +30,9 @@ impl LanguageParser for GoParser {
         let mut parser = Parser::new();
         parser.set_language(&self.language)?;
 
-        let tree = parser.parse(&file.content, None).ok_or_else(|| {
-            anyhow::anyhow!("failed to parse {}", file.relative_path)
-        })?;
+        let tree = parser
+            .parse(&file.content, None)
+            .ok_or_else(|| anyhow::anyhow!("failed to parse {}", file.relative_path))?;
 
         let source_bytes = file.content.as_bytes();
         let root = tree.root_node();
@@ -42,9 +42,10 @@ impl LanguageParser for GoParser {
         let fp = file_node_id(&file.relative_path);
 
         // Parse function declarations: func name(...) { ... }
-        if let Ok(query) =
-            Query::new(&self.language, "(function_declaration name: (identifier) @name) @fn")
-        {
+        if let Ok(query) = Query::new(
+            &self.language,
+            "(function_declaration name: (identifier) @name) @fn",
+        ) {
             extract_nodes(
                 &mut nodes,
                 &mut edges,
@@ -190,12 +191,18 @@ fn traverse_imports(
     if node.kind() == "import_declaration" {
         // Go imports: import "path" or import ( "path1" "path2" )
         for j in 0..node.child_count() {
-            let Some(import_child) = node.child(j) else { continue };
+            let Some(import_child) = node.child(j) else {
+                continue;
+            };
             if import_child.kind() == "import_spec" {
                 // import_spec has a path child
                 for k in 0..import_child.child_count() {
-                    let Some(spec_child) = import_child.child(k) else { continue };
-                    if spec_child.kind() == "interpreted_string_literal" || spec_child.kind() == "raw_string_literal" {
+                    let Some(spec_child) = import_child.child(k) else {
+                        continue;
+                    };
+                    if spec_child.kind() == "interpreted_string_literal"
+                        || spec_child.kind() == "raw_string_literal"
+                    {
                         let import_path = unquote_str(&source_bytes[spec_child.byte_range()]);
                         // Only resolve relative imports (same module)
                         // Go module imports are usually remote; we skip them for local graph
@@ -212,7 +219,9 @@ fn traverse_imports(
                         }
                     }
                 }
-            } else if import_child.kind() == "interpreted_string_literal" || import_child.kind() == "raw_string_literal" {
+            } else if import_child.kind() == "interpreted_string_literal"
+                || import_child.kind() == "raw_string_literal"
+            {
                 // Single import: import "path"
                 let import_path = unquote_str(&source_bytes[import_child.byte_range()]);
                 if import_path.starts_with('.') {
@@ -244,7 +253,11 @@ fn traverse_imports(
 
 fn unquote_str(s: &[u8]) -> String {
     let s = std::str::from_utf8(s).unwrap_or("");
-    s.trim().trim_matches('\'').trim_matches('"').trim_matches('`').to_string()
+    s.trim()
+        .trim_matches('\'')
+        .trim_matches('"')
+        .trim_matches('`')
+        .to_string()
 }
 
 fn resolve_import_path(current: &str, import: &str) -> String {
@@ -270,7 +283,10 @@ fn extract_calls(edges: &mut Vec<EdgeDef>, root: Node, source: &[u8], file: &Sou
 }
 
 fn is_fn_node(kind: &str) -> bool {
-    matches!(kind, "function_declaration" | "method_declaration" | "func_literal")
+    matches!(
+        kind,
+        "function_declaration" | "method_declaration" | "func_literal"
+    )
 }
 
 fn fn_name_from_node(node: Node, source: &[u8], file: &SourceFile) -> Option<String> {

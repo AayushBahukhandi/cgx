@@ -64,7 +64,7 @@ pub fn run(repo_path: &Path) -> anyhow::Result<()> {
         };
 
         // Notifications have no id — do not respond
-        if request.id.is_none() && request.method.starts_with("notifications/") {
+        if request.id.is_none() {
             continue;
         }
 
@@ -89,23 +89,37 @@ fn handle_request(request: &Request, repo_path: &Path) -> Response {
                 },
                 "serverInfo": {
                     "name": "cgx",
-                    "version": "0.1.0"
+                    "version": env!("CARGO_PKG_VERSION")
                 }
             });
-            Response { jsonrpc: "2.0".into(), id, result: Some(result), error: None }
+            Response {
+                jsonrpc: "2.0".into(),
+                id,
+                result: Some(result),
+                error: None,
+            }
         }
 
-        "initialized" => {
-            Response { jsonrpc: "2.0".into(), id, result: Some(serde_json::json!({})), error: None }
-        }
+        "initialized" => Response {
+            jsonrpc: "2.0".into(),
+            id,
+            result: Some(serde_json::json!({})),
+            error: None,
+        },
 
-        "ping" => {
-            Response { jsonrpc: "2.0".into(), id, result: Some(serde_json::json!({})), error: None }
-        }
+        "ping" => Response {
+            jsonrpc: "2.0".into(),
+            id,
+            result: Some(serde_json::json!({})),
+            error: None,
+        },
 
-        "tools/list" => {
-            Response { jsonrpc: "2.0".into(), id, result: Some(tools_list()), error: None }
-        }
+        "tools/list" => Response {
+            jsonrpc: "2.0".into(),
+            id,
+            result: Some(tools_list()),
+            error: None,
+        },
 
         "tools/call" => {
             let params = request.params.as_ref().and_then(|p| p.as_object());
@@ -123,20 +137,33 @@ fn handle_request(request: &Request, repo_path: &Path) -> Response {
                     let result = serde_json::json!({
                         "content": [{ "type": "text", "text": text }]
                     });
-                    Response { jsonrpc: "2.0".into(), id, result: Some(result), error: None }
+                    Response {
+                        jsonrpc: "2.0".into(),
+                        id,
+                        result: Some(result),
+                        error: None,
+                    }
                 }
                 Err(e) => Response {
                     jsonrpc: "2.0".into(),
                     id,
                     result: None,
-                    error: Some(ErrorBody { code: -32000, message: e }),
+                    error: Some(ErrorBody {
+                        code: -32000,
+                        message: e,
+                    }),
                 },
             }
         }
 
         "notifications/initialized" | "notifications/cancelled" => {
             // Should not reach here (skipped before handle_request), but handle gracefully
-            Response { jsonrpc: "2.0".into(), id, result: Some(serde_json::json!({})), error: None }
+            Response {
+                jsonrpc: "2.0".into(),
+                id,
+                result: Some(serde_json::json!({})),
+                error: None,
+            }
         }
 
         _ => Response {

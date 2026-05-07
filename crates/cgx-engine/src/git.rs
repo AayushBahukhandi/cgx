@@ -68,8 +68,7 @@ fn compute_churn_and_co_changes(
             }
         }
 
-        let diff =
-            repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
+        let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
 
         let mut changed_files: Vec<String> = Vec::new();
 
@@ -166,12 +165,9 @@ fn compute_blame(
         if total_lines > 0 {
             let mut file_owners: Vec<(String, String, f64)> = author_lines
                 .into_iter()
-                .map(|(email, (name, lines))| {
-                    (name, email, lines as f64 / total_lines as f64)
-                })
+                .map(|(email, (name, lines))| (name, email, lines as f64 / total_lines as f64))
                 .collect();
-            file_owners
-                .sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+            file_owners.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
             file_owners.truncate(3);
             owners.insert(file_path.clone(), file_owners);
         }

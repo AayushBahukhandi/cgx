@@ -10,6 +10,12 @@ import type { GraphNode } from "./types/graph";
 export default function App() {
   const { data, loading, error } = useGraph();
 
+  useEffect(() => {
+    if (data?.meta?.repo_name) {
+      document.title = `cgx — ${data.meta.repo_name}`;
+    }
+  }, [data]);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleKinds, setVisibleKinds] = useState<Set<string>>(

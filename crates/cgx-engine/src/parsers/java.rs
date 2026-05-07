@@ -1,4 +1,4 @@
-use tree_sitter::{Parser, Query, QueryCursor, Node};
+use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
 use crate::walker::SourceFile;
@@ -30,9 +30,9 @@ impl LanguageParser for JavaParser {
         let mut parser = Parser::new();
         parser.set_language(&self.language)?;
 
-        let tree = parser.parse(&file.content, None).ok_or_else(|| {
-            anyhow::anyhow!("failed to parse {}", file.relative_path)
-        })?;
+        let tree = parser
+            .parse(&file.content, None)
+            .ok_or_else(|| anyhow::anyhow!("failed to parse {}", file.relative_path))?;
 
         let source_bytes = file.content.as_bytes();
         let root = tree.root_node();
@@ -47,8 +47,15 @@ impl LanguageParser for JavaParser {
             "(class_declaration name: (identifier) @name) @cls",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Class, "cls", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Class,
+                "cls",
+                &fp,
             );
         }
 
@@ -58,8 +65,15 @@ impl LanguageParser for JavaParser {
             "(interface_declaration name: (identifier) @name) @cls",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Class, "cls", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Class,
+                "cls",
+                &fp,
             );
         }
 
@@ -69,8 +83,15 @@ impl LanguageParser for JavaParser {
             "(method_declaration name: (identifier) @name) @fn",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Function, "fn", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Function,
+                "fn",
+                &fp,
             );
         }
 
@@ -80,8 +101,15 @@ impl LanguageParser for JavaParser {
             "(constructor_declaration name: (identifier) @name) @fn",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Function, "fn", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Function,
+                "fn",
+                &fp,
             );
         }
 
@@ -181,7 +209,9 @@ fn traverse_imports(
     if node.kind() == "import_declaration" {
         // Java: import com.foo.Bar; or import com.foo.*;
         for j in 0..node.child_count() {
-            let Some(import_child) = node.child(j) else { continue };
+            let Some(import_child) = node.child(j) else {
+                continue;
+            };
             if import_child.kind() == "scoped_identifier" || import_child.kind() == "identifier" {
                 let import_path = node_text(import_child, source_bytes);
                 // Convert package path to potential file path heuristic
@@ -222,7 +252,12 @@ fn resolve_java_import(_current: &str, import: &str) -> String {
     let Some(last) = parts.last() else {
         return String::new();
     };
-    if last.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+    if last
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+    {
         let path = parts.join("/");
         format!("{}.java", path)
     } else {
@@ -237,7 +272,10 @@ fn extract_calls(edges: &mut Vec<EdgeDef>, root: Node, source: &[u8], file: &Sou
 }
 
 fn is_fn_node(kind: &str) -> bool {
-    matches!(kind, "method_declaration" | "constructor_declaration" | "lambda_expression")
+    matches!(
+        kind,
+        "method_declaration" | "constructor_declaration" | "lambda_expression"
+    )
 }
 
 fn fn_name_from_node(node: Node, source: &[u8], file: &SourceFile) -> Option<String> {

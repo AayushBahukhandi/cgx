@@ -34,14 +34,12 @@ struct SourceNode {
     community: i64,
 }
 
-type SseStream = Pin<Box<dyn Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>> + Send>>;
+type SseStream = Pin<
+    Box<dyn Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>> + Send>,
+>;
 
 /// POST /api/chat handler — streams LLM output as SSE
-pub async fn chat_stream(
-    repo_path: PathBuf,
-    body: ChatRequest,
-) -> axum::response::Sse<SseStream>
-{
+pub async fn chat_stream(repo_path: PathBuf, body: ChatRequest) -> axum::response::Sse<SseStream> {
     let db = match GraphDb::open(&repo_path) {
         Ok(db) => db,
         Err(e) => {
@@ -60,12 +58,15 @@ pub async fn chat_stream(
     let (context, sources) = build_graph_context(&db, &body.message, body.selected_node.as_deref());
 
     // Build full prompt
-    let history_text = body.history.iter()
-        .fold(String::new(), |mut acc, m| {
-            let role = if m.role == "assistant" { "Assistant" } else { "Human" };
-            acc.push_str(&format!("{}: {}\n", role, m.content));
-            acc
-        });
+    let history_text = body.history.iter().fold(String::new(), |mut acc, m| {
+        let role = if m.role == "assistant" {
+            "Assistant"
+        } else {
+            "Human"
+        };
+        acc.push_str(&format!("{}: {}\n", role, m.content));
+        acc
+    });
 
     let prompt = format!(
         "{}\n---\n{}User question: {}\n\nAnswer concisely using the codebase information above. For code references, use backtick-quoted `file_path:line_number` format.",
@@ -78,7 +79,8 @@ pub async fn chat_stream(
             let err = serde_json::json!({
                 "type": "error",
                 "message": format!("Chat error: {}", e)
-            }).to_string();
+            })
+            .to_string();
             let s: SseStream = Box::pin(stream::once(async move {
                 Ok(axum::response::sse::Event::default().data(err))
             }));
@@ -88,7 +90,11 @@ pub async fn chat_stream(
 }
 
 /// Build context from DuckDB graph data
-fn build_graph_context(db: &GraphDb, message: &str, selected_node: Option<&str>) -> (String, Vec<SourceNode>) {
+fn build_graph_context(
+    db: &GraphDb,
+    message: &str,
+    selected_node: Option<&str>,
+) -> (String, Vec<SourceNode>) {
     let mut context = String::from(
         "You are a codebase expert assistant. Below is structured information about the codebase.\n\n"
     );
@@ -103,9 +109,12 @@ fn build_graph_context(db: &GraphDb, message: &str, selected_node: Option<&str>)
     } else {
         let mut entries: Vec<_> = languages.iter().collect();
         entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
-        entries.iter().take(3)
+        entries
+            .iter()
+            .take(3)
             .map(|(l, p)| format!("{} {:.0}%", l, *p * 100.0))
-            .collect::<Vec<_>>().join(", ")
+            .collect::<Vec<_>>()
+            .join(", ")
     };
 
     context.push_str(&format!(
@@ -118,7 +127,12 @@ fn build_graph_context(db: &GraphDb, message: &str, selected_node: Option<&str>)
         if !communities.is_empty() {
             context.push_str("TOP COMMUNITIES\n");
             for (id, label, count, top_nodes) in communities.iter().take(5) {
-                let tops = top_nodes.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+                let tops = top_nodes
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 context.push_str(&format!("  #{id} {label} — {count} nodes (top: {tops})\n"));
             }
             context.push('\n');
@@ -202,7 +216,11 @@ fn build_graph_context(db: &GraphDb, message: &str, selected_node: Option<&str>)
     }
 
     let mut sources = relevant_nodes;
-    sources.sort_by(|a, b| b.churn.partial_cmp(&a.churn).unwrap_or(std::cmp::Ordering::Equal));
+    sources.sort_by(|a, b| {
+        b.churn
+            .partial_cmp(&a.churn)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     (context, sources)
 }
@@ -210,14 +228,13 @@ fn build_graph_context(db: &GraphDb, message: &str, selected_node: Option<&str>)
 /// Simple keyword extraction from user message
 fn extract_keywords(message: &str) -> Vec<String> {
     let stop_words: &[&str] = &[
-        "the", "is", "are", "a", "an", "what", "who", "how", "where", "why",
-        "when", "can", "does", "do", "did", "was", "were", "be", "has", "have",
-        "had", "will", "would", "could", "should", "may", "might", "this", "that",
-        "these", "those", "it", "its", "in", "on", "at", "to", "for", "of", "with",
-        "about", "from", "by", "or", "and", "not", "but", "if", "then", "else",
-        "tell", "show", "find", "get", "give", "make", "explain", "describe",
-        "help", "me", "my", "our", "your", "their", "codebase", "file",
-        "files", "code", "any", "some", "all", "just", "like",
+        "the", "is", "are", "a", "an", "what", "who", "how", "where", "why", "when", "can", "does",
+        "do", "did", "was", "were", "be", "has", "have", "had", "will", "would", "could", "should",
+        "may", "might", "this", "that", "these", "those", "it", "its", "in", "on", "at", "to",
+        "for", "of", "with", "about", "from", "by", "or", "and", "not", "but", "if", "then",
+        "else", "tell", "show", "find", "get", "give", "make", "explain", "describe", "help", "me",
+        "my", "our", "your", "their", "codebase", "file", "files", "code", "any", "some", "all",
+        "just", "like",
     ];
     let words: Vec<String> = message
         .split(|c: char| !c.is_alphanumeric())
@@ -242,13 +259,14 @@ async fn stream_llm_response(
     prompt: &str,
     sources: &[SourceNode],
 ) -> anyhow::Result<SseStream> {
-    let provider = std::env::var("CGX_CHAT_PROVIDER")
-        .unwrap_or_else(|_| chat_config.provider.clone());
+    let provider =
+        std::env::var("CGX_CHAT_PROVIDER").unwrap_or_else(|_| chat_config.provider.clone());
 
     let sources_json = serde_json::to_string(&serde_json::json!({
         "type": "sources",
         "nodes": sources,
-    })).unwrap_or_else(|_| r#"{"type":"sources","nodes":[]}"#.to_string());
+    }))
+    .unwrap_or_else(|_| r#"{"type":"sources","nodes":[]}"#.to_string());
 
     let sources_event = axum::response::sse::Event::default().data(sources_json);
 
@@ -261,7 +279,9 @@ async fn stream_llm_response(
         "openai" => stream_openai(&client, chat_config, prompt, sources_event).await,
         "anthropic" => stream_anthropic(&client, chat_config, prompt, sources_event).await,
         "ollama" => stream_ollama(&client, chat_config, prompt, sources_event).await,
-        "openai-compatible" => stream_openai_compatible(&client, chat_config, prompt, sources_event).await,
+        "openai-compatible" => {
+            stream_openai_compatible(&client, chat_config, prompt, sources_event).await
+        }
         _ => anyhow::bail!(
             "Unknown chat provider: '{}'. Supported: openai, anthropic, ollama, openai-compatible. \
              Set CGX_CHAT_PROVIDER or run `cgx init` to configure.",
@@ -280,11 +300,10 @@ async fn stream_openai(
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .context("OPENAI_API_KEY environment variable not set")?;
+    let api_key =
+        std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY environment variable not set")?;
 
-    let model = std::env::var("CGX_CHAT_MODEL")
-        .unwrap_or_else(|_| config.model.clone());
+    let model = std::env::var("CGX_CHAT_MODEL").unwrap_or_else(|_| config.model.clone());
 
     let body = serde_json::json!({
         "model": model,
@@ -337,8 +356,7 @@ async fn stream_anthropic(
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .context("ANTHROPIC_API_KEY environment variable not set")?;
 
-    let model = std::env::var("CGX_CHAT_MODEL")
-        .unwrap_or_else(|_| config.model.clone());
+    let model = std::env::var("CGX_CHAT_MODEL").unwrap_or_else(|_| config.model.clone());
 
     let body = serde_json::json!({
         "model": model,
@@ -369,10 +387,7 @@ async fn stream_anthropic(
         if json.get("type")?.as_str()? == "message_stop" {
             return Some(("__done__".to_string(), true));
         }
-        let text = json
-            .get("delta")?
-            .get("text")?
-            .as_str()?;
+        let text = json.get("delta")?.get("text")?.as_str()?;
         Some((text.to_string(), false))
     }))
 }
@@ -387,11 +402,9 @@ async fn stream_ollama(
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {
-    let host = std::env::var("CGX_OLLAMA_HOST")
-        .unwrap_or_else(|_| config.ollama_host.clone());
+    let host = std::env::var("CGX_OLLAMA_HOST").unwrap_or_else(|_| config.ollama_host.clone());
 
-    let model = std::env::var("CGX_CHAT_MODEL")
-        .unwrap_or_else(|_| config.model.clone());
+    let model = std::env::var("CGX_CHAT_MODEL").unwrap_or_else(|_| config.model.clone());
 
     let body = serde_json::json!({
         "model": model,
@@ -423,10 +436,7 @@ async fn stream_ollama(
         if json.get("done")?.as_bool()? {
             return Some(("__done__".to_string(), true));
         }
-        let text = json
-            .get("message")?
-            .get("content")?
-            .as_str()?;
+        let text = json.get("message")?.get("content")?.as_str()?;
         Some((text.to_string(), false))
     }))
 }
@@ -441,14 +451,15 @@ async fn stream_openai_compatible(
     prompt: &str,
     sources_event: axum::response::sse::Event,
 ) -> anyhow::Result<SseStream> {
-    let api_key = std::env::var("CGX_CHAT_API_KEY")
-        .context("CGX_CHAT_API_KEY environment variable not set (required for openai-compatible provider)")?;
+    let api_key = std::env::var("CGX_CHAT_API_KEY").context(
+        "CGX_CHAT_API_KEY environment variable not set (required for openai-compatible provider)",
+    )?;
 
-    let base_url = std::env::var("CGX_CHAT_BASE_URL")
-        .context("CGX_CHAT_BASE_URL environment variable not set (required for openai-compatible provider)")?;
+    let base_url = std::env::var("CGX_CHAT_BASE_URL").context(
+        "CGX_CHAT_BASE_URL environment variable not set (required for openai-compatible provider)",
+    )?;
 
-    let model = std::env::var("CGX_CHAT_MODEL")
-        .unwrap_or_else(|_| config.model.clone());
+    let model = std::env::var("CGX_CHAT_MODEL").unwrap_or_else(|_| config.model.clone());
 
     let body = serde_json::json!({
         "model": model,

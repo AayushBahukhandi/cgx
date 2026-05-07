@@ -7,11 +7,7 @@ static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn temp_dir() -> PathBuf {
     let count = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "cgx-test-{}-{}",
-        std::process::id(),
-        count
-    ));
+    let dir = std::env::temp_dir().join(format!("cgx-test-{}-{}", std::process::id(), count));
     std::fs::create_dir_all(&dir).expect("failed to create test dir");
 
     // Create a dummy file to make the dir a "repo"
@@ -209,13 +205,22 @@ fn test_get_neighbors() {
     let neighbors = db
         .get_neighbors("fn:src/a.ts:foo", 1)
         .expect("get neighbors failed");
-    assert!(neighbors.iter().any(|n| n.id == "fn:src/b.ts:bar"), "should find bar at depth 1");
+    assert!(
+        neighbors.iter().any(|n| n.id == "fn:src/b.ts:bar"),
+        "should find bar at depth 1"
+    );
 
     let neighbors2 = db
         .get_neighbors("fn:src/a.ts:foo", 2)
         .expect("get neighbors failed");
-    assert!(neighbors2.iter().any(|n| n.id == "fn:src/b.ts:bar"), "should find bar at depth 2");
-    assert!(neighbors2.iter().any(|n| n.id == "fn:src/c.ts:baz"), "should find baz at depth 2");
+    assert!(
+        neighbors2.iter().any(|n| n.id == "fn:src/b.ts:bar"),
+        "should find bar at depth 2"
+    );
+    assert!(
+        neighbors2.iter().any(|n| n.id == "fn:src/c.ts:baz"),
+        "should find baz at depth 2"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -319,7 +324,8 @@ fn test_upsert_replaces_existing() {
         out_degree: 0,
     };
 
-    db.upsert_nodes(std::slice::from_ref(&node1)).expect("first upsert failed");
+    db.upsert_nodes(std::slice::from_ref(&node1))
+        .expect("first upsert failed");
     assert_eq!(db.node_count().expect("node count failed"), 1);
 
     let node2 = Node {
@@ -333,7 +339,10 @@ fn test_upsert_replaces_existing() {
         .get_node("fn:src/x.ts:testfn")
         .expect("get updated node failed")
         .expect("updated node should exist");
-    assert!((retrieved.churn - 0.9).abs() < 0.001, "should have updated churn");
+    assert!(
+        (retrieved.churn - 0.9).abs() < 0.001,
+        "should have updated churn"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

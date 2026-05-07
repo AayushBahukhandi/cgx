@@ -323,9 +323,9 @@ impl GraphDb {
     }
 
     pub fn get_all_edges(&self) -> anyhow::Result<Vec<Edge>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, src, dst, kind, weight, confidence FROM edges",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, src, dst, kind, weight, confidence FROM edges")?;
         let rows = stmt.query_map([], |row| {
             Ok(Edge {
                 id: row.get(0)?,
@@ -431,10 +431,12 @@ impl GraphDb {
         Ok(breakdown)
     }
 
-    pub fn get_node_counts_by_kind(&self) -> anyhow::Result<std::collections::HashMap<String, u64>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT kind, COUNT(*) as cnt FROM nodes GROUP BY kind",
-        )?;
+    pub fn get_node_counts_by_kind(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, u64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT kind, COUNT(*) as cnt FROM nodes GROUP BY kind")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
@@ -447,7 +449,12 @@ impl GraphDb {
         Ok(counts)
     }
 
-    pub fn upsert_node_scores(&self, node_id: &str, churn: f64, coupling: f64) -> anyhow::Result<()> {
+    pub fn upsert_node_scores(
+        &self,
+        node_id: &str,
+        churn: f64,
+        coupling: f64,
+    ) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE nodes SET churn = ?, coupling = ? WHERE id = ?",
             params![churn, coupling, node_id],
@@ -520,12 +527,17 @@ impl GraphDb {
         Ok(())
     }
 
-    pub fn update_node_communities(&self, communities: &std::collections::HashMap<String, i64>) -> anyhow::Result<usize> {
+    pub fn update_node_communities(
+        &self,
+        communities: &std::collections::HashMap<String, i64>,
+    ) -> anyhow::Result<usize> {
         if communities.is_empty() {
             return Ok(0);
         }
         let mut count = 0;
-        let mut stmt = self.conn.prepare("UPDATE nodes SET community = ? WHERE id = ?")?;
+        let mut stmt = self
+            .conn
+            .prepare("UPDATE nodes SET community = ? WHERE id = ?")?;
         for (node_id, community) in communities {
             let affected = stmt.execute(params![*community, node_id.as_str()])?;
             count += affected;
@@ -630,10 +642,13 @@ impl GraphDb {
             ))
         })?;
 
-        let mut community_map: std::collections::HashMap<i64, CommunityGroup> = std::collections::HashMap::new();
+        let mut community_map: std::collections::HashMap<i64, CommunityGroup> =
+            std::collections::HashMap::new();
         for row in rows {
             let (community, kind, name, _path, in_degree) = row?;
-            let entry = community_map.entry(community).or_insert_with(|| (Vec::new(), 0));
+            let entry = community_map
+                .entry(community)
+                .or_insert_with(|| (Vec::new(), 0));
             entry.0.push((kind, in_degree, name));
             entry.1 += 1;
         }
@@ -647,7 +662,10 @@ impl GraphDb {
                     .take(5)
                     .map(|(kind, _deg, name)| format!("{}:{}", kind, name))
                     .collect();
-                let label = top_nodes.first().cloned().unwrap_or_else(|| format!("community-{}", community));
+                let label = top_nodes
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| format!("community-{}", community));
                 (community, label, count, top_nodes)
             })
             .collect();
@@ -794,7 +812,8 @@ impl GraphDb {
         let placeholders = paths.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!("DELETE FROM file_hashes WHERE path IN ({})", placeholders);
         let mut stmt = self.conn.prepare(&sql)?;
-        let params: Vec<&dyn duckdb::ToSql> = paths.iter().map(|p| p as &dyn duckdb::ToSql).collect();
+        let params: Vec<&dyn duckdb::ToSql> =
+            paths.iter().map(|p| p as &dyn duckdb::ToSql).collect();
         stmt.execute(params.as_slice())?;
         Ok(())
     }
@@ -810,22 +829,25 @@ impl GraphDb {
             placeholders, placeholders
         );
         let mut stmt_edges = self.conn.prepare(&sql_edges)?;
-        let params_edges: Vec<&dyn duckdb::ToSql> = paths.iter().chain(paths.iter()).map(|p| p as &dyn duckdb::ToSql).collect();
+        let params_edges: Vec<&dyn duckdb::ToSql> = paths
+            .iter()
+            .chain(paths.iter())
+            .map(|p| p as &dyn duckdb::ToSql)
+            .collect();
         stmt_edges.execute(params_edges.as_slice())?;
 
         // Delete nodes
         let sql_nodes = format!("DELETE FROM nodes WHERE path IN ({})", placeholders);
         let mut stmt_nodes = self.conn.prepare(&sql_nodes)?;
-        let params_nodes: Vec<&dyn duckdb::ToSql> = paths.iter().map(|p| p as &dyn duckdb::ToSql).collect();
+        let params_nodes: Vec<&dyn duckdb::ToSql> =
+            paths.iter().map(|p| p as &dyn duckdb::ToSql).collect();
         let count = stmt_nodes.execute(params_nodes.as_slice())?;
         Ok(count)
     }
 }
 
 pub fn repo_hash(path: &Path) -> String {
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let path_str = canonical.to_string_lossy().to_string();
     let mut hasher = Sha256::new();
     hasher.update(path_str.as_bytes());

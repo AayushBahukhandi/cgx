@@ -1,17 +1,16 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use cgx_engine::{GraphDb, Node, Edge, build_skill_data, generate_skill, generate_agents_md, SkillData, CommunityInfo};
+use cgx_engine::{
+    build_skill_data, generate_agents_md, generate_skill, CommunityInfo, Edge, GraphDb, Node,
+    SkillData,
+};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn temp_dir() -> PathBuf {
     let count = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "cgx-skill-test-{}-{}",
-        std::process::id(),
-        count
-    ));
+    let dir = std::env::temp_dir().join(format!("cgx-skill-test-{}-{}", std::process::id(), count));
     std::fs::create_dir_all(&dir).expect("failed to create test dir");
     std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
@@ -151,8 +150,16 @@ fn test_generate_skill_has_no_placeholders() {
         language_breakdown: "TypeScript 100%".to_string(),
         community_count: 2,
         top_communities: vec![
-            CommunityInfo { id: 1, label: "auth".to_string(), node_count: 20 },
-            CommunityInfo { id: 2, label: "db".to_string(), node_count: 22 },
+            CommunityInfo {
+                id: 1,
+                label: "auth".to_string(),
+                node_count: 20,
+            },
+            CommunityInfo {
+                id: 2,
+                label: "db".to_string(),
+                node_count: 22,
+            },
         ],
         hotspots: vec![],
         entry_points: vec![],
@@ -161,19 +168,47 @@ fn test_generate_skill_has_no_placeholders() {
 
     let skill = generate_skill(&data);
     let unfilled: Vec<_> = skill.match_indices("{{").collect();
-    assert!(unfilled.is_empty(), "skill should have no unfilled placeholders: {:?}", unfilled);
+    assert!(
+        unfilled.is_empty(),
+        "skill should have no unfilled placeholders: {:?}",
+        unfilled
+    );
 
     // Check required sections are present
-    assert!(skill.contains("## When to Use cgx"), "missing 'When to Use cgx' section");
-    assert!(skill.contains("## Trigger Patterns"), "missing 'Trigger Patterns' section");
+    assert!(
+        skill.contains("## When to Use cgx"),
+        "missing 'When to Use cgx' section"
+    );
+    assert!(
+        skill.contains("## Trigger Patterns"),
+        "missing 'Trigger Patterns' section"
+    );
     assert!(skill.contains("## Commands"), "missing 'Commands' section");
     assert!(skill.contains("## Workflow"), "missing 'Workflow' section");
-    assert!(skill.contains("## Token Budget"), "missing 'Token Budget' section");
-    assert!(skill.contains("## This Codebase"), "missing 'This Codebase' section");
-    assert!(skill.contains("cgx summary"), "missing 'cgx summary' command");
-    assert!(skill.contains("cgx query find"), "missing 'cgx query find' command");
-    assert!(skill.contains("cgx query blast-radius"), "missing 'cgx query blast-radius' command");
-    assert!(skill.contains("cgx hotspots"), "missing 'cgx hotspots' command");
+    assert!(
+        skill.contains("## Token Budget"),
+        "missing 'Token Budget' section"
+    );
+    assert!(
+        skill.contains("## This Codebase"),
+        "missing 'This Codebase' section"
+    );
+    assert!(
+        skill.contains("cgx summary"),
+        "missing 'cgx summary' command"
+    );
+    assert!(
+        skill.contains("cgx query find"),
+        "missing 'cgx query find' command"
+    );
+    assert!(
+        skill.contains("cgx query blast-radius"),
+        "missing 'cgx query blast-radius' command"
+    );
+    assert!(
+        skill.contains("cgx hotspots"),
+        "missing 'cgx hotspots' command"
+    );
 }
 
 #[test]
@@ -196,8 +231,14 @@ fn test_generate_skill_has_stats() {
     let skill = generate_skill(&data);
     assert!(skill.contains("42"), "skill should contain node count");
     assert!(skill.contains("100"), "skill should contain edge count");
-    assert!(skill.contains("TypeScript 100%"), "skill should contain language breakdown");
-    assert!(skill.contains("2026-05-01T12:00:00Z"), "skill should contain indexed_at");
+    assert!(
+        skill.contains("TypeScript 100%"),
+        "skill should contain language breakdown"
+    );
+    assert!(
+        skill.contains("2026-05-01T12:00:00Z"),
+        "skill should contain indexed_at"
+    );
 }
 
 #[test]
@@ -211,9 +252,11 @@ fn test_generate_agents_md_has_no_placeholders() {
         edge_count: 100,
         language_breakdown: "TypeScript 100%".to_string(),
         community_count: 2,
-        top_communities: vec![
-            CommunityInfo { id: 1, label: "auth".to_string(), node_count: 20 },
-        ],
+        top_communities: vec![CommunityInfo {
+            id: 1,
+            label: "auth".to_string(),
+            node_count: 20,
+        }],
         hotspots: vec![],
         entry_points: vec![],
         god_nodes: vec![],
@@ -221,14 +264,30 @@ fn test_generate_agents_md_has_no_placeholders() {
 
     let agents = generate_agents_md(&data);
     let unfilled: Vec<_> = agents.match_indices("{{").collect();
-    assert!(unfilled.is_empty(), "agents md should have no unfilled placeholders: {:?}", unfilled);
+    assert!(
+        unfilled.is_empty(),
+        "agents md should have no unfilled placeholders: {:?}",
+        unfilled
+    );
 
     assert!(agents.contains("## Overview"), "missing 'Overview' section");
-    assert!(agents.contains("## Module Map"), "missing 'Module Map' section");
+    assert!(
+        agents.contains("## Module Map"),
+        "missing 'Module Map' section"
+    );
     assert!(agents.contains("## Hotspots"), "missing 'Hotspots' section");
-    assert!(agents.contains("## Entry Points"), "missing 'Entry Points' section");
-    assert!(agents.contains("## AI Integration"), "missing 'AI Integration' section");
-    assert!(agents.contains("CGX_SKILL.md"), "should mention CGX_SKILL.md");
+    assert!(
+        agents.contains("## Entry Points"),
+        "missing 'Entry Points' section"
+    );
+    assert!(
+        agents.contains("## AI Integration"),
+        "missing 'AI Integration' section"
+    );
+    assert!(
+        agents.contains("CGX_SKILL.md"),
+        "should mention CGX_SKILL.md"
+    );
 }
 
 #[test]
@@ -265,8 +324,14 @@ fn test_generate_skill_hotspots_section() {
 
     let skill = generate_skill(&data);
     assert!(skill.contains("### Hotspots"), "missing Hotspots section");
-    assert!(skill.contains("src/auth.ts"), "hotspots should mention auth.ts");
-    assert!(skill.contains("0.90"), "hotspots should contain churn value");
+    assert!(
+        skill.contains("src/auth.ts"),
+        "hotspots should mention auth.ts"
+    );
+    assert!(
+        skill.contains("0.90"),
+        "hotspots should contain churn value"
+    );
 }
 
 #[test]
@@ -302,7 +367,10 @@ fn test_generate_skill_entry_points_section() {
     };
 
     let skill = generate_skill(&data);
-    assert!(skill.contains("### Entry Points"), "missing Entry Points section");
+    assert!(
+        skill.contains("### Entry Points"),
+        "missing Entry Points section"
+    );
     assert!(skill.contains("main"), "entry points should mention main");
 }
 
@@ -339,7 +407,13 @@ fn test_generate_skill_god_nodes_section() {
     };
 
     let skill = generate_skill(&data);
-    assert!(skill.contains("### Most Depended-On Nodes"), "missing God Nodes section");
+    assert!(
+        skill.contains("### Most Depended-On Nodes"),
+        "missing God Nodes section"
+    );
     assert!(skill.contains("query"), "god nodes should mention query");
-    assert!(skill.contains("10 callers"), "god nodes should show caller count");
+    assert!(
+        skill.contains("10 callers"),
+        "god nodes should show caller count"
+    );
 }

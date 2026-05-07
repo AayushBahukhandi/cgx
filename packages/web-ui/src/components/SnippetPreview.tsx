@@ -44,7 +44,9 @@ export default function SnippetPreview({ path, lineStart, lineEnd }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const from = lineStart > 0 ? lineStart : 1;
-  const to = lineEnd > lineStart ? lineEnd : from + 10;
+  const rawTo = lineEnd > lineStart ? lineEnd : from + 15;
+  // Show at least 8 lines of context so tiny functions don't appear as a single line
+  const to = rawTo - from < 7 ? from + 7 : rawTo;
 
   useEffect(() => {
     let cancelled = false;

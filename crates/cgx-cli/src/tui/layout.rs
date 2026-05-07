@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
-use fdg_sim::{
-    force, Dimensions, ForceGraph, ForceGraphHelper, Simulation, SimulationParameters,
-};
 use fdg_sim::petgraph::graph::NodeIndex;
+use fdg_sim::{force, Dimensions, ForceGraph, ForceGraphHelper, Simulation, SimulationParameters};
 
 use cgx_engine::{Edge, Node};
 
@@ -14,10 +12,7 @@ pub struct GraphSim {
 }
 
 impl GraphSim {
-    pub fn new(
-        nodes: &[&Node],
-        edges: &[&Edge],
-    ) -> Self {
+    pub fn new(nodes: &[&Node], edges: &[&Edge]) -> Self {
         let mut graph: ForceGraph<(), ()> = ForceGraph::default();
         let mut name_to_idx: HashMap<String, NodeIndex> = HashMap::new();
 
@@ -47,7 +42,13 @@ impl GraphSim {
 
         // Use smaller dt (0.01) for numerical stability, more steps to compensate.
         let dt = 0.01_f32;
-        let initial_steps = if n < 50 { 400 } else if n < 200 { 600 } else { 900 };
+        let initial_steps = if n < 50 {
+            400
+        } else if n < 200 {
+            600
+        } else {
+            900
+        };
         for _ in 0..initial_steps {
             sim.update(dt);
         }
@@ -77,21 +78,23 @@ impl GraphSim {
 }
 
 /// Normalize positions to fill [padding, area-dim - padding] in each axis.
-pub fn normalize(
-    positions: &mut HashMap<String, (f64, f64)>,
-    area_w: f64,
-    area_h: f64,
-) {
+pub fn normalize(positions: &mut HashMap<String, (f64, f64)>, area_w: f64, area_h: f64) {
     if positions.is_empty() {
         return;
     }
 
-    let min_x = positions.values().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let min_x = positions
+        .values()
+        .map(|p| p.0)
+        .fold(f64::INFINITY, f64::min);
     let max_x = positions
         .values()
         .map(|p| p.0)
         .fold(f64::NEG_INFINITY, f64::max);
-    let min_y = positions.values().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let min_y = positions
+        .values()
+        .map(|p| p.1)
+        .fold(f64::INFINITY, f64::min);
     let max_y = positions
         .values()
         .map(|p| p.1)

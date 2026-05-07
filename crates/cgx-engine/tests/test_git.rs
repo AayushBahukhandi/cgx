@@ -30,8 +30,14 @@ fn test_churn_scores() {
 
     assert!(auth_churn > 0.0, "auth.ts should have churn > 0");
     assert!(db_churn > 0.0, "db.ts should have churn > 0");
-    assert!(auth_churn >= router_churn, "auth.ts should have equal or higher churn than router.ts");
-    assert!(db_churn >= router_churn, "db.ts should have equal or higher churn than router.ts");
+    assert!(
+        auth_churn >= router_churn,
+        "auth.ts should have equal or higher churn than router.ts"
+    );
+    assert!(
+        db_churn >= router_churn,
+        "db.ts should have equal or higher churn than router.ts"
+    );
 }
 
 #[test]
@@ -52,13 +58,20 @@ fn test_co_change_edges() {
         (a == "src/auth.ts" && b == "src/db.ts") || (a == "src/db.ts" && b == "src/auth.ts")
     });
 
-    assert!(has_auth_db, "should have co-change edge between auth.ts and db.ts");
+    assert!(
+        has_auth_db,
+        "should have co-change edge between auth.ts and db.ts"
+    );
 
     // Weight should be > 0.5 (co-changed in most commits)
     if let Some((_, _, weight)) = co_changes.iter().find(|(a, b, _)| {
         (a == "src/auth.ts" && b == "src/db.ts") || (a == "src/db.ts" && b == "src/auth.ts")
     }) {
-        assert!(*weight > 0.5, "co-change weight should be > 0.5, got {}", weight);
+        assert!(
+            *weight > 0.5,
+            "co-change weight should be > 0.5, got {}",
+            weight
+        );
     }
 }
 
@@ -80,19 +93,33 @@ fn test_ownership() {
     assert!(auth_owners.is_some(), "auth.ts should have ownership data");
 
     if let Some(auth_owners) = auth_owners {
-        let has_alice = auth_owners.iter().any(|(_, email, _)| email == "alice@dev.io");
-        assert!(has_alice, "Alice should own auth.ts (she made 3 of 4 commits to this file)");
+        let has_alice = auth_owners
+            .iter()
+            .any(|(_, email, _)| email == "alice@dev.io");
+        assert!(
+            has_alice,
+            "Alice should own auth.ts (she made 3 of 4 commits to this file)"
+        );
 
         // Alice should have > 50% ownership
-        if let Some((_, _, pct)) = auth_owners.iter().find(|(_, email, _)| email == "alice@dev.io") {
-            assert!(*pct > 0.5, "Alice should own > 50% of auth.ts, got {:.2}", pct);
+        if let Some((_, _, pct)) = auth_owners
+            .iter()
+            .find(|(_, email, _)| email == "alice@dev.io")
+        {
+            assert!(
+                *pct > 0.5,
+                "Alice should own > 50% of auth.ts, got {:.2}",
+                pct
+            );
         }
     }
 
     // router.ts should have Bob as owner (he added it in commit 3)
     let router_owners = owners.get("src/router.ts");
     if let Some(router_owners) = router_owners {
-        let has_bob = router_owners.iter().any(|(_, email, _)| email == "bob@dev.io");
+        let has_bob = router_owners
+            .iter()
+            .any(|(_, email, _)| email == "bob@dev.io");
         assert!(has_bob, "Bob should have ownership of router.ts");
     }
 }

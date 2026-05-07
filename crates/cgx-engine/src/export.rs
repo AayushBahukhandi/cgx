@@ -60,12 +60,7 @@ pub fn export_mermaid(db: &GraphDb, max_nodes: usize) -> anyhow::Result<String> 
     }
 
     let mut ranked: Vec<&Node> = nodes.iter().collect();
-    ranked.sort_by_key(|n| {
-        -(node_degree
-            .get(&n.id)
-            .copied()
-            .unwrap_or(0) as i64)
-    });
+    ranked.sort_by_key(|n| -(node_degree.get(&n.id).copied().unwrap_or(0) as i64));
     ranked.truncate(max);
 
     let selected: HashSet<&str> = ranked.iter().map(|n| n.id.as_str()).collect();
@@ -87,9 +82,10 @@ pub fn export_mermaid(db: &GraphDb, max_nodes: usize) -> anyhow::Result<String> 
     }
 
     for edge in &included_edges {
-        if let (Some(src_safe), Some(dst_safe)) =
-            (safe_ids.get(edge.src.as_str()), safe_ids.get(edge.dst.as_str()))
-        {
+        if let (Some(src_safe), Some(dst_safe)) = (
+            safe_ids.get(edge.src.as_str()),
+            safe_ids.get(edge.dst.as_str()),
+        ) {
             let style = match edge.kind.as_str() {
                 "CALLS" => "-->",
                 "IMPORTS" => "-.->",
@@ -155,7 +151,12 @@ pub fn export_dot(db: &GraphDb) -> anyhow::Result<String> {
 
         output.push_str(&format!(
             "  \"{}\" [label=\"{}\", color=\"{}\", fontcolor=\"{}\", width={:.2}, height={:.2}];\n",
-            safe_id, label, color, color, size, size * 0.6
+            safe_id,
+            label,
+            color,
+            color,
+            size,
+            size * 0.6
         ));
     }
 
@@ -229,7 +230,6 @@ fn dot_to_svg(dot: &str) -> anyhow::Result<String> {
 }
 
 fn render_svg_circle(nodes: &[Node], edges: &[Edge]) -> anyhow::Result<String> {
-
     if nodes.is_empty() {
         return Ok(r##"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
   <rect width="400" height="200" fill="#0a0a0f"/>
@@ -293,9 +293,10 @@ fn render_svg_circle(nodes: &[Node], edges: &[Edge]) -> anyhow::Result<String> {
     );
 
     for edge in &display_edges {
-        if let (Some(&(x1, y1)), Some(&(x2, y2))) =
-            (positions.get(edge.src.as_str()), positions.get(edge.dst.as_str()))
-        {
+        if let (Some(&(x1, y1)), Some(&(x2, y2))) = (
+            positions.get(edge.src.as_str()),
+            positions.get(edge.dst.as_str()),
+        ) {
             let color = edge_colors
                 .get(edge.kind.as_str())
                 .copied()
@@ -316,7 +317,10 @@ fn render_svg_circle(nodes: &[Node], edges: &[Edge]) -> anyhow::Result<String> {
                 .unwrap_or("#888888");
             let r = 4.0 + (node.churn * 8.0).min(12.0);
             let label = node.name.chars().take(20).collect::<String>();
-            let escaped_label = label.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let escaped_label = label
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
 
             svg.push_str(&format!(
                 r##"  <circle cx="{:.1}" cy="{:.1}" r="{:.1}" fill="{}" opacity="0.8"/>
@@ -368,22 +372,10 @@ pub fn export_graphml(db: &GraphDb) -> anyhow::Result<String> {
         let safe_kind = xml_escape(&node.kind);
         let safe_lang = xml_escape(&node.language);
 
-        xml.push_str(&format!(
-            "    <node id=\"{}\">\n",
-            safe_id
-        ));
-        xml.push_str(&format!(
-            "      <data key=\"name\">{}</data>\n",
-            safe_name
-        ));
-        xml.push_str(&format!(
-            "      <data key=\"kind\">{}</data>\n",
-            safe_kind
-        ));
-        xml.push_str(&format!(
-            "      <data key=\"path\">{}</data>\n",
-            safe_path
-        ));
+        xml.push_str(&format!("    <node id=\"{}\">\n", safe_id));
+        xml.push_str(&format!("      <data key=\"name\">{}</data>\n", safe_name));
+        xml.push_str(&format!("      <data key=\"kind\">{}</data>\n", safe_kind));
+        xml.push_str(&format!("      <data key=\"path\">{}</data>\n", safe_path));
         xml.push_str(&format!(
             "      <data key=\"churn\">{}</data>\n",
             node.churn
@@ -412,10 +404,7 @@ pub fn export_graphml(db: &GraphDb) -> anyhow::Result<String> {
             "    <edge source=\"{}\" target=\"{}\">\n",
             safe_src, safe_dst
         ));
-        xml.push_str(&format!(
-            "      <data key=\"kind\">{}</data>\n",
-            safe_kind
-        ));
+        xml.push_str(&format!("      <data key=\"kind\">{}</data>\n", safe_kind));
         xml.push_str(&format!(
             "      <data key=\"weight\">{}</data>\n",
             edge.weight
@@ -432,7 +421,10 @@ pub fn export_graphml(db: &GraphDb) -> anyhow::Result<String> {
 }
 
 fn sanitize_mermaid_id(id: &str) -> String {
-    id.replace([':', '.', '/', '-', '(', ')', '[', ']', ' ', '<', '>', '|'], "_")
+    id.replace(
+        [':', '.', '/', '-', '(', ')', '[', ']', ' ', '<', '>', '|'],
+        "_",
+    )
 }
 
 fn sanitize_mermaid_label(name: &str) -> String {
@@ -445,8 +437,7 @@ fn sanitize_mermaid_label(name: &str) -> String {
 }
 
 fn sanitize_dot_id(id: &str) -> String {
-    id.replace('"', "\\\"")
-        .replace(['\n', '\r'], " ")
+    id.replace('"', "\\\"").replace(['\n', '\r'], " ")
 }
 
 fn xml_escape(s: &str) -> String {

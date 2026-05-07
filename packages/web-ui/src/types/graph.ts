@@ -7,6 +7,7 @@ export interface GraphData {
 
 export interface GraphMeta {
   repo_id: string;
+  repo_name?: string;
   node_count: number;
   edge_count: number;
   language_breakdown: Record<string, number>;

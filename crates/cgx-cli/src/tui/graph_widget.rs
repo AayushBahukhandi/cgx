@@ -16,26 +16,26 @@ impl GraphWidget {
     pub fn node_color(kind: &str) -> Color {
         match kind {
             "Function" => Color::Rgb(0, 255, 136),
-            "Class"    => Color::Rgb(59, 130, 246),
-            "File"     => Color::Rgb(245, 158, 11),
-            "Module"   => Color::Rgb(139, 92, 246),
+            "Class" => Color::Rgb(59, 130, 246),
+            "File" => Color::Rgb(245, 158, 11),
+            "Module" => Color::Rgb(139, 92, 246),
             "Variable" => Color::Rgb(52, 211, 153),
-            "Type"     => Color::Rgb(168, 85, 247),
-            "Author"   => Color::Rgb(236, 72, 153),
-            _          => Color::Gray,
+            "Type" => Color::Rgb(168, 85, 247),
+            "Author" => Color::Rgb(236, 72, 153),
+            _ => Color::Gray,
         }
     }
 
     pub fn node_glyph(kind: &str) -> &'static str {
         match kind {
             "Function" => "◉",
-            "Class"    => "◈",
-            "File"     => "◧",
-            "Module"   => "⬡",
+            "Class" => "◈",
+            "File" => "◧",
+            "Module" => "⬡",
             "Variable" => "◦",
-            "Type"     => "◇",
-            "Author"   => "◎",
-            _          => "●",
+            "Type" => "◇",
+            "Author" => "◎",
+            _ => "●",
         }
     }
 }
@@ -86,7 +86,13 @@ pub fn render_graph(app: &App, area: Rect, buf: &mut Buffer) {
         .y_bounds([0.0, ORIG_H])
         .paint(move |ctx| {
             for &(x1, y1, x2, y2) in &edge_lines {
-                ctx.draw(&CanvasLine { x1, y1, x2, y2, color: Color::Rgb(70, 70, 100) });
+                ctx.draw(&CanvasLine {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color: Color::Rgb(70, 70, 100),
+                });
             }
         })
         .render(area, buf);
@@ -129,10 +135,7 @@ pub fn render_graph(app: &App, area: Rect, buf: &mut Buffer) {
                 continue;
             }
             let (sx, sy) = to_screen(vx, vy);
-            if sx >= area.x
-                && sx < area.x + area.width
-                && sy >= area.y
-                && sy < area.y + area.height
+            if sx >= area.x && sx < area.x + area.width && sy >= area.y && sy < area.y + area.height
             {
                 let is_selected = selected_id == Some(node.id.as_str());
                 let color = GraphWidget::node_color(&node.kind);
@@ -152,8 +155,8 @@ pub fn render_graph(app: &App, area: Rect, buf: &mut Buffer) {
                 buf.set_string(sx, sy, glyph, style);
 
                 // Labels for selected + well-connected hubs
-                let show_label = is_selected
-                    || (node.in_degree + node.out_degree) >= degree_threshold;
+                let show_label =
+                    is_selected || (node.in_degree + node.out_degree) >= degree_threshold;
 
                 if show_label {
                     let label = truncate_label(&node.name, 16);
@@ -165,12 +168,7 @@ pub fn render_graph(app: &App, area: Rect, buf: &mut Buffer) {
                         } else {
                             Color::Rgb(130, 130, 155)
                         };
-                        buf.set_string(
-                            label_x,
-                            label_y,
-                            &label,
-                            Style::default().fg(label_color),
-                        );
+                        buf.set_string(label_x, label_y, &label, Style::default().fg(label_color));
                     }
                 }
             }
@@ -232,11 +230,11 @@ fn truncate_label(name: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::app::App;
     use super::*;
+    use cgx_engine::{Edge, Node};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use cgx_engine::{Node, Edge};
-    use super::super::app::App;
     use std::path::PathBuf;
 
     fn make_node(id: &str, name: &str, degree: i64) -> Node {
@@ -287,24 +285,25 @@ mod tests {
 
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("failed to create test terminal");
-        terminal.draw(|f| {
-            let area = f.size();
-            // Simulate the layout from render_ui
-            let main_chunks = ratatui::layout::Layout::default()
-                .direction(ratatui::layout::Direction::Horizontal)
-                .constraints([
-                    ratatui::layout::Constraint::Percentage(60),
-                    ratatui::layout::Constraint::Percentage(40),
-                ])
-                .split(area);
-            let graph_area = main_chunks[0];
-            let graph_block = ratatui::widgets::Block::default()
-                .borders(ratatui::widgets::Borders::ALL);
-            let inner_graph = graph_block.inner(graph_area);
-            f.render_widget(graph_block, graph_area);
-            render_graph(&app, inner_graph, f.buffer_mut());
-        })
-        .expect("failed to draw graph widget");
+        terminal
+            .draw(|f| {
+                let area = f.size();
+                // Simulate the layout from render_ui
+                let main_chunks = ratatui::layout::Layout::default()
+                    .direction(ratatui::layout::Direction::Horizontal)
+                    .constraints([
+                        ratatui::layout::Constraint::Percentage(60),
+                        ratatui::layout::Constraint::Percentage(40),
+                    ])
+                    .split(area);
+                let graph_area = main_chunks[0];
+                let graph_block =
+                    ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                let inner_graph = graph_block.inner(graph_area);
+                f.render_widget(graph_block, graph_area);
+                render_graph(&app, inner_graph, f.buffer_mut());
+            })
+            .expect("failed to draw graph widget");
 
         let buf = terminal.backend().buffer().clone();
 
@@ -325,16 +324,24 @@ mod tests {
                     && cell.symbol() != "└"
                     && cell.symbol() != "┘"
                     && cell.fg != Color::Rgb(60, 60, 80) // border color
-                    && cell.fg != Color::Rgb(85, 85, 105) // legend text
+                    && cell.fg != Color::Rgb(85, 85, 105)
+                // legend text
                 {
-                    if x < min_x { min_x = x; }
-                    if x > max_x { max_x = x; }
+                    if x < min_x {
+                        min_x = x;
+                    }
+                    if x > max_x {
+                        max_x = x;
+                    }
                     node_count += 1;
                 }
             }
         }
 
-        println!("Node cells found: {}, x range: [{}, {}]", node_count, min_x, max_x);
+        println!(
+            "Node cells found: {}, x range: [{}, {}]",
+            node_count, min_x, max_x
+        );
         println!("Buffer preview (rows 1-20, cols 1-70):");
         for y in 1..20 {
             let mut line = String::new();
@@ -349,7 +356,15 @@ mod tests {
             println!("{}", line);
         }
 
-        assert!(node_count > 50, "Should find many node cells, got {}", node_count);
-        assert!(max_x - min_x > 30, "Nodes should span at least 30 columns, got {}", max_x - min_x);
+        assert!(
+            node_count > 50,
+            "Should find many node cells, got {}",
+            node_count
+        );
+        assert!(
+            max_x - min_x > 30,
+            "Nodes should span at least 30 columns, got {}",
+            max_x - min_x
+        );
     }
 }

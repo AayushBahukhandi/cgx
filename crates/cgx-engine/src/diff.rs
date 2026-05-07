@@ -23,12 +23,13 @@ pub struct GraphDiff {
 
 /// Take a graph snapshot by parsing the source tree at a specific git commit.
 pub fn snapshot_at_commit(repo_path: &Path, commit_spec: &str) -> anyhow::Result<GraphSnapshot> {
-    let repo = git2::Repository::open(repo_path)
-        .context("Failed to open git repository")?;
+    let repo = git2::Repository::open(repo_path).context("Failed to open git repository")?;
 
-    let obj = repo.revparse_single(commit_spec)
+    let obj = repo
+        .revparse_single(commit_spec)
         .context(format!("Invalid commit reference: {}", commit_spec))?;
-    let commit = obj.peel_to_commit()
+    let commit = obj
+        .peel_to_commit()
         .context("Reference does not resolve to a commit")?;
     let tree = commit.tree()?;
     let commit_sha = commit.id().to_string();
@@ -49,10 +50,8 @@ pub fn snapshot_at_commit(repo_path: &Path, commit_spec: &str) -> anyhow::Result
 
     // Add file nodes
     let lang_map = crate::resolver::build_language_map(&nodes);
-    let file_paths: std::collections::HashSet<String> = files
-        .iter()
-        .map(|f| f.relative_path.clone())
-        .collect();
+    let file_paths: std::collections::HashSet<String> =
+        files.iter().map(|f| f.relative_path.clone()).collect();
     let file_nodes = crate::resolver::create_file_nodes(&file_paths, &lang_map);
     nodes.extend(file_nodes);
 
@@ -104,11 +103,17 @@ fn walk_tree(
 
 fn detect_language(path: &str) -> Option<Language> {
     let lower = path.to_lowercase();
-    if lower.ends_with(".ts") || lower.ends_with(".tsx") { Some(Language::TypeScript) }
-    else if lower.ends_with(".js") || lower.ends_with(".jsx") || lower.ends_with(".mjs") { Some(Language::JavaScript) }
-    else if lower.ends_with(".py") { Some(Language::Python) }
-    else if lower.ends_with(".rs") { Some(Language::Rust) }
-    else { None }
+    if lower.ends_with(".ts") || lower.ends_with(".tsx") {
+        Some(Language::TypeScript)
+    } else if lower.ends_with(".js") || lower.ends_with(".jsx") || lower.ends_with(".mjs") {
+        Some(Language::JavaScript)
+    } else if lower.ends_with(".py") {
+        Some(Language::Python)
+    } else if lower.ends_with(".rs") {
+        Some(Language::Rust)
+    } else {
+        None
+    }
 }
 
 fn is_binary(content: &str) -> bool {
@@ -184,12 +189,8 @@ fn id_from_edge(e: &EdgeDef) -> String {
 }
 
 /// Find files changed in the last N days and compute impact.
-pub fn compute_impact(
-    repo_path: &Path,
-    since_days: u32,
-) -> anyhow::Result<ImpactReport> {
-    let repo = git2::Repository::open(repo_path)
-        .context("Failed to open git repository")?;
+pub fn compute_impact(repo_path: &Path, since_days: u32) -> anyhow::Result<ImpactReport> {
+    let repo = git2::Repository::open(repo_path).context("Failed to open git repository")?;
 
     // Get files changed since N days ago
     let cutoff = chrono::Utc::now() - chrono::Duration::days(since_days as i64);
@@ -218,7 +219,9 @@ pub fn compute_impact(
                     }
                     true
                 },
-                None, None, None,
+                None,
+                None,
+                None,
             )?;
         } else {
             for i in 0..commit.parent_count() {
@@ -233,7 +236,9 @@ pub fn compute_impact(
                         }
                         true
                     },
-                    None, None, None,
+                    None,
+                    None,
+                    None,
                 )?;
             }
         }
@@ -253,7 +258,10 @@ pub fn compute_impact(
     // Build reverse adjacency: what depends on what
     let mut rev_adj: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
     for e in &all_edges {
-        rev_adj.entry(e.dst.as_str()).or_default().push(e.src.as_str());
+        rev_adj
+            .entry(e.dst.as_str())
+            .or_default()
+            .push(e.src.as_str());
     }
 
     let mut downstream = std::collections::HashSet::new();

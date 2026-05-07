@@ -8,11 +8,8 @@ static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn temp_dir() -> PathBuf {
     let count = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "cgx-cluster-test-{}-{}",
-        std::process::id(),
-        count
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("cgx-cluster-test-{}-{}", std::process::id(), count));
     std::fs::create_dir_all(&dir).expect("failed to create test dir");
     std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
@@ -79,7 +76,11 @@ fn test_detect_communities_isolated_nodes() {
     assert_eq!(communities.len(), 3);
     // All should be in different communities
     let unique: HashSet<_> = communities.values().collect();
-    assert_eq!(unique.len(), 3, "isolated nodes should be in separate communities");
+    assert_eq!(
+        unique.len(),
+        3,
+        "isolated nodes should be in separate communities"
+    );
 }
 
 #[test]
@@ -88,9 +89,12 @@ fn test_detect_communities_connected_pair() {
         make_node("fn:src/a.ts:foo", "Function", "foo", "src/a.ts"),
         make_node("fn:src/b.ts:bar", "Function", "bar", "src/b.ts"),
     ];
-    let edges = vec![
-        make_edge("fn:src/a.ts:foo", "fn:src/b.ts:bar", "CALLS", 1.0),
-    ];
+    let edges = vec![make_edge(
+        "fn:src/a.ts:foo",
+        "fn:src/b.ts:bar",
+        "CALLS",
+        1.0,
+    )];
     let communities = detect_communities(&nodes, &edges);
     assert_eq!(communities.len(), 2);
     // Connected pair should be in the same community
@@ -139,7 +143,10 @@ fn test_detect_communities_two_clusters() {
     assert_eq!(communities["fn:src/b.ts:gamma"], cluster_b);
 
     // A and B should be different communities (due to sparse cross-edge)
-    assert_ne!(cluster_a, cluster_b, "weakly connected clusters should separate");
+    assert_ne!(
+        cluster_a, cluster_b,
+        "weakly connected clusters should separate"
+    );
 }
 
 #[test]
@@ -152,17 +159,37 @@ fn test_run_clustering_integrates_with_db() {
         make_node("fn:src/auth.ts:logout", "Function", "logout", "src/auth.ts"),
         make_node("fn:src/db.ts:query", "Function", "query", "src/db.ts"),
         make_node("fn:src/db.ts:connect", "Function", "connect", "src/db.ts"),
-        make_node("fn:src/router.ts:handle", "Function", "handle", "src/router.ts"),
+        make_node(
+            "fn:src/router.ts:handle",
+            "Function",
+            "handle",
+            "src/router.ts",
+        ),
         make_node("file:src/auth.ts", "File", "src/auth.ts", "src/auth.ts"),
         make_node("file:src/db.ts", "File", "src/db.ts", "src/db.ts"),
-        make_node("file:src/router.ts", "File", "src/router.ts", "src/router.ts"),
+        make_node(
+            "file:src/router.ts",
+            "File",
+            "src/router.ts",
+            "src/router.ts",
+        ),
     ];
 
     let edges = vec![
         make_edge("fn:src/auth.ts:login", "fn:src/db.ts:query", "CALLS", 1.0),
         make_edge("fn:src/auth.ts:logout", "fn:src/db.ts:query", "CALLS", 1.0),
-        make_edge("fn:src/router.ts:handle", "fn:src/auth.ts:login", "CALLS", 1.0),
-        make_edge("fn:src/router.ts:handle", "fn:src/db.ts:connect", "CALLS", 1.0),
+        make_edge(
+            "fn:src/router.ts:handle",
+            "fn:src/auth.ts:login",
+            "CALLS",
+            1.0,
+        ),
+        make_edge(
+            "fn:src/router.ts:handle",
+            "fn:src/db.ts:connect",
+            "CALLS",
+            1.0,
+        ),
     ];
 
     db.upsert_nodes(&nodes).expect("upsert nodes failed");
@@ -175,7 +202,8 @@ fn test_run_clustering_integrates_with_db() {
     assert!(!community_map.is_empty());
 
     db.clear_communities().expect("clear failed");
-    db.update_node_communities(&community_map).expect("update communities failed");
+    db.update_node_communities(&community_map)
+        .expect("update communities failed");
 
     let communities_list = db.get_communities().expect("get communities failed");
     assert!(!communities_list.is_empty());
@@ -184,7 +212,8 @@ fn test_run_clustering_integrates_with_db() {
     for node in &all_nodes {
         assert!(
             node.community > 0,
-            "node {} should have a community assigned", node.id
+            "node {} should have a community assigned",
+            node.id
         );
     }
 
@@ -243,9 +272,12 @@ fn test_community_query_by_id() {
         make_node("fn:src/x.ts:two", "Function", "two", "src/x.ts"),
         make_node("fn:src/y.ts:three", "Function", "three", "src/y.ts"),
     ];
-    let edges = vec![
-        make_edge("fn:src/x.ts:one", "fn:src/x.ts:two", "CALLS", 1.0),
-    ];
+    let edges = vec![make_edge(
+        "fn:src/x.ts:one",
+        "fn:src/x.ts:two",
+        "CALLS",
+        1.0,
+    )];
 
     db.upsert_nodes(&nodes).expect("upsert nodes failed");
     db.upsert_edges(&edges).expect("upsert edges failed");
@@ -286,8 +318,7 @@ fn test_detect_communities_respects_edge_weights() {
     let communities = detect_communities(&nodes, &edges);
     // Center should be with strong (higher weight) not with weak
     assert_eq!(
-        communities["fn:src/a.ts:center"],
-        communities["fn:src/b.ts:strong"],
+        communities["fn:src/a.ts:center"], communities["fn:src/b.ts:strong"],
         "center should cluster with strong (higher edge weight)"
     );
 

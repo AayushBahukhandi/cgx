@@ -1,38 +1,41 @@
-pub mod walker;
+pub mod cluster;
+pub mod config;
+pub mod diff;
+pub mod export;
+pub mod git;
+pub mod graph;
 pub mod parser;
 pub mod parsers;
-pub mod graph;
 pub mod registry;
 pub mod resolver;
-pub mod git;
-pub mod cluster;
-pub mod export;
 pub mod skill;
-pub mod diff;
-pub mod config;
+pub mod walker;
 
-pub use walker::{walk_repo, Language, SourceFile};
+pub use cluster::{detect_communities, run_clustering};
+pub use config::{
+    AnalyzeConfig, CgxConfig, ChatConfig, ExportConfig, IndexConfig, McpConfig, ProjectConfig,
+    ServeConfig, SkillConfig, WatchConfig,
+};
+pub use diff::{
+    compute_impact, diff_graphs, snapshot_at_commit, GraphDiff, GraphSnapshot, ImpactReport,
+};
+pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
+pub use git::{analyze_repo, GitAnalysis};
+pub use graph::{CommunityRow, Edge, GraphDb, Node, RepoStats};
 pub use parser::{
     EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult, ParserRegistry,
 };
-pub use graph::{CommunityRow, Edge, GraphDb, Node, RepoStats};
 pub use registry::{Registry, RepoEntry};
 pub use resolver::resolve;
-pub use git::{analyze_repo, GitAnalysis};
-pub use cluster::{detect_communities, run_clustering};
-pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
 pub use skill::{
-    build_skill_data, generate_skill, generate_agents_md, write_skill, write_agents_md,
-    install_git_hooks, CommunityInfo, SkillData,
+    build_skill_data, generate_agents_md, generate_skill, install_git_hooks, write_agents_md,
+    write_skill, CommunityInfo, SkillData,
 };
-pub use diff::{
-    snapshot_at_commit, diff_graphs, compute_impact, GraphDiff, GraphSnapshot, ImpactReport,
-};
-pub use config::{CgxConfig, AnalyzeConfig, ChatConfig, IndexConfig, McpConfig, ProjectConfig, ServeConfig, SkillConfig, WatchConfig, ExportConfig};
+pub use walker::{walk_repo, Language, SourceFile};
 
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use sha2::{Digest, Sha256};
 
 /// Incremental repository analysis — only re-parses changed files.
 /// Returns true if analysis was performed, false if no changes detected.
@@ -83,7 +86,10 @@ pub fn analyze_repo_incremental(
     }
 
     if !quiet {
-        println!("  Incremental: {} changed/new/deleted file(s)", changed_paths.len());
+        println!(
+            "  Incremental: {} changed/new/deleted file(s)",
+            changed_paths.len()
+        );
     }
 
     // 4. Load existing nodes and filter out changed/deleted ones
@@ -192,10 +198,18 @@ pub fn analyze_repo_incremental(
         .iter()
         .filter(|e| {
             // Keep edges that don't reference changed/deleted file nodes
-            let src_file = all_node_defs.iter().find(|n| n.id == e.src).map(|n| n.path.clone());
-            let dst_file = all_node_defs.iter().find(|n| n.id == e.dst).map(|n| n.path.clone());
+            let src_file = all_node_defs
+                .iter()
+                .find(|n| n.id == e.src)
+                .map(|n| n.path.clone());
+            let dst_file = all_node_defs
+                .iter()
+                .find(|n| n.id == e.dst)
+                .map(|n| n.path.clone());
             match (src_file, dst_file) {
-                (Some(sp), Some(dp)) => !changed_paths.contains(&sp) && !changed_paths.contains(&dp),
+                (Some(sp), Some(dp)) => {
+                    !changed_paths.contains(&sp) && !changed_paths.contains(&dp)
+                }
                 _ => false,
             }
         })
@@ -245,15 +259,23 @@ pub fn analyze_repo_incremental(
             .collect();
         let git_analysis = analyze_repo(repo_path, &all_file_paths)?;
 
-        let max_churn = git_analysis.file_churn.values().copied().fold(0.0, f64::max);
+        let max_churn = git_analysis
+            .file_churn
+            .values()
+            .copied()
+            .fold(0.0, f64::max);
         for (path, churn) in &git_analysis.file_churn {
-            let normalized = if max_churn > 0.0 { churn / max_churn } else { 0.0 };
+            let normalized = if max_churn > 0.0 {
+                churn / max_churn
+            } else {
+                0.0
+            };
             let _ = db.upsert_node_scores(&format!("file:{}", path), normalized, 0.0);
         }
 
         let mut author_nodes = Vec::new();
         let mut own_edges = Vec::new();
-            for (author, files) in &git_analysis.file_owners {
+        for (author, files) in &git_analysis.file_owners {
             let author_id = format!("author:{}", author);
             author_nodes.push(crate::graph::Node {
                 id: author_id.clone(),
@@ -316,7 +338,10 @@ pub fn analyze_repo_incremental(
 
     if !quiet {
         println!("  Incremental re-index complete.");
-        println!("  Kept {} unchanged nodes.", kept_nodes.len() - new_node_count);
+        println!(
+            "  Kept {} unchanged nodes.",
+            kept_nodes.len() - new_node_count
+        );
         println!("  Added {} new/changed nodes.", new_node_count);
         if !deleted_paths.is_empty() {
             println!("  Removed {} deleted files.", deleted_paths.len());

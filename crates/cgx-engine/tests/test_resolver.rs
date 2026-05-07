@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use cgx_engine::{EdgeDef, EdgeKind, NodeDef, NodeKind, resolve};
+use cgx_engine::{resolve, EdgeDef, EdgeKind, NodeDef, NodeKind};
 
 #[test]
 fn test_resolve_cross_file_imports() {
@@ -66,11 +66,17 @@ fn test_resolve_cross_file_imports() {
     let resolved = resolve(&nodes, &edges, &repo_root).expect("resolve failed");
 
     // Should have all import edges preserved
-    let import_edges: Vec<_> = resolved.iter().filter(|e| e.kind == EdgeKind::Imports).collect();
+    let import_edges: Vec<_> = resolved
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Imports)
+        .collect();
     assert_eq!(import_edges.len(), 2, "should have 2 import edges");
 
     // Should have all export edges preserved (they reference valid node IDs)
-    let export_edges: Vec<_> = resolved.iter().filter(|e| e.kind == EdgeKind::Exports).collect();
+    let export_edges: Vec<_> = resolved
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Exports)
+        .collect();
     assert_eq!(export_edges.len(), 2, "should have 2 export edges");
 
     // Total resolved edges should be >= original edges
@@ -142,7 +148,10 @@ fn test_resolve_calls_by_name() {
     let resolved = resolve(&nodes, &edges, &repo_root).expect("resolve failed");
 
     // Should create a CALLS edge to the actual login node
-    let calls: Vec<_> = resolved.iter().filter(|e| e.kind == EdgeKind::Calls).collect();
+    let calls: Vec<_> = resolved
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Calls)
+        .collect();
     assert!(!calls.is_empty(), "should have at least one CALLS edge");
     let has_login = calls.iter().any(|e| e.dst.contains("login"));
     assert!(has_login, "should resolve call to login function");

@@ -1,5 +1,5 @@
-mod tui;
 mod chat;
+mod tui;
 
 use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use cgx_engine::{
-    analyze_repo, walk_repo, Edge, EdgeKind, GraphDb, Node, NodeKind, ParserRegistry, Registry,
-    RepoEntry, resolve, run_clustering,
-    export_json, export_mermaid, export_dot, export_svg, export_graphml,
+    analyze_repo, export_dot, export_graphml, export_json, export_mermaid, export_svg, resolve,
+    run_clustering, walk_repo, Edge, EdgeKind, GraphDb, Node, NodeKind, ParserRegistry, Registry,
+    RepoEntry,
 };
 
 use tui::{App, AppMode, GraphWidget};
@@ -19,7 +19,7 @@ use anyhow::Context;
 use ratatui::layout::Rect;
 
 #[derive(Parser)]
-#[command(name = "cgx", version = "0.1.0", about = "Codebase Knowledge Graph")]
+#[command(name = "cgx", version, about = "Codebase Knowledge Graph")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -73,9 +73,7 @@ enum Commands {
         yes: bool,
     },
     /// Show status of the current indexed repo
-    Status {
-        path: Option<PathBuf>,
-    },
+    Status { path: Option<PathBuf> },
     /// List all indexed repos
     List,
     /// Show high-risk files (high churn x coupling)
@@ -176,6 +174,20 @@ enum Commands {
         /// Print README badge markdown and exit
         #[arg(long)]
         badge: bool,
+
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+    /// Upload the indexed graph to a GitHub Gist and return a shareable viewer URL
+    Share {
+        /// GitHub personal access token (or set GITHUB_TOKEN env var)
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Make the Gist public (default: secret/unlisted)
+        #[arg(long)]
+        public: bool,
 
         /// Path to the repository
         #[arg(long)]
@@ -319,9 +331,7 @@ fn main() -> anyhow::Result<()> {
                 )
             }
         }
-        Commands::Init { name, yes } => {
-            cmd_init(name, yes)
-        }
+        Commands::Init { name, yes } => cmd_init(name, yes),
         Commands::Status { path } => {
             let repo_path = path.unwrap_or_else(|| PathBuf::from("."));
             cmd_status(&repo_path)
@@ -368,18 +378,16 @@ fn main() -> anyhow::Result<()> {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
             cmd_summary(&repo_path)
         }
-        Commands::Query { cmd } => {
-            match cmd {
-                QueryCmd::Find { name, kind, repo } => cmd_query_find(name, kind, repo),
-                QueryCmd::Deps { name, repo } => cmd_query_deps(name, repo),
-                QueryCmd::BlastRadius { name, repo } => cmd_query_blast_radius(name, repo),
-                QueryCmd::Chain { path, repo } => cmd_query_chain(path, repo),
-                QueryCmd::Owners { path, repo } => cmd_query_owners(path, repo),
-                QueryCmd::Search { query, limit, repo } => cmd_query_search(query, limit, repo),
-                QueryCmd::Community { id, repo } => cmd_query_community(id, repo),
-                QueryCmd::DeadCode { repo } => cmd_query_dead_code(repo),
-            }
-        }
+        Commands::Query { cmd } => match cmd {
+            QueryCmd::Find { name, kind, repo } => cmd_query_find(name, kind, repo),
+            QueryCmd::Deps { name, repo } => cmd_query_deps(name, repo),
+            QueryCmd::BlastRadius { name, repo } => cmd_query_blast_radius(name, repo),
+            QueryCmd::Chain { path, repo } => cmd_query_chain(path, repo),
+            QueryCmd::Owners { path, repo } => cmd_query_owners(path, repo),
+            QueryCmd::Search { query, limit, repo } => cmd_query_search(query, limit, repo),
+            QueryCmd::Community { id, repo } => cmd_query_community(id, repo),
+            QueryCmd::DeadCode { repo } => cmd_query_dead_code(repo),
+        },
         Commands::Export {
             format,
             out,
@@ -389,9 +397,22 @@ fn main() -> anyhow::Result<()> {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
             cmd_export(&repo_path, &format, out.as_deref(), max_nodes)
         }
-        Commands::Publish { dry_run, badge, repo } => {
+        Commands::Publish {
+            dry_run,
+            badge,
+            repo,
+        } => {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
             cmd_publish(&repo_path, dry_run, badge)
+        }
+        Commands::Share {
+            token,
+            public,
+            repo,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(cmd_share(&repo_path, token.as_deref(), public))
         }
         Commands::Diff { commit, repo } => {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
@@ -500,9 +521,9 @@ fn resolve_github_path(path: &Path) -> anyhow::Result<PathBuf> {
                 eprintln!("  Warning: git pull failed, using existing files");
             }
         } else {
-            let clone_parent = clone_dir
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("clone path has no parent: {}", clone_dir.display()))?;
+            let clone_parent = clone_dir.parent().ok_or_else(|| {
+                anyhow::anyhow!("clone path has no parent: {}", clone_dir.display())
+            })?;
             std::fs::create_dir_all(clone_parent)?;
             let url = format!("https://github.com/{}/{}", owner, repo);
             println!("  Cloning {} into {}...", url, clone_dir.display());
@@ -530,7 +551,9 @@ fn cmd_analyze(
     no_hooks: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let repo_name = canonical
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -578,10 +601,15 @@ fn cmd_analyze(
 
                     if !quiet {
                         println!();
-                        println!("  Graph updated — {} nodes, {} edges", node_count, edge_count);
+                        println!(
+                            "  Graph updated — {} nodes, {} edges",
+                            node_count, edge_count
+                        );
                         println!();
                         println!("  Generated files:");
-                        println!("    CGX_SKILL.md   \u{2014} skill for any AI assistant (commit this)");
+                        println!(
+                            "    CGX_SKILL.md   \u{2014} skill for any AI assistant (commit this)"
+                        );
                         println!("    AGENTS.md      \u{2014} architecture summary (commit this)");
                     }
                     Ok(())
@@ -698,7 +726,8 @@ fn cmd_analyze(
     // Step 5: Git Intelligence
     if !no_git {
         let relative_paths: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
-        let valid_paths: std::collections::HashSet<&str> = relative_paths.iter().map(|s| s.as_str()).collect();
+        let valid_paths: std::collections::HashSet<&str> =
+            relative_paths.iter().map(|s| s.as_str()).collect();
         match analyze_repo(&canonical, &relative_paths) {
             Ok(analysis) => {
                 let mut author_nodes: Vec<Node> = Vec::new();
@@ -744,7 +773,9 @@ fn cmd_analyze(
                 }
 
                 for (file_a, file_b, weight) in &analysis.co_changes {
-                    if !valid_paths.contains(file_a.as_str()) || !valid_paths.contains(file_b.as_str()) {
+                    if !valid_paths.contains(file_a.as_str())
+                        || !valid_paths.contains(file_b.as_str())
+                    {
                         continue;
                     }
                     let id_a = format!("file:{}", file_a);
@@ -801,7 +832,10 @@ fn cmd_analyze(
         match run_clustering(&db) {
             Ok(count) => {
                 if count > 0 && !quiet {
-                    println!("  \u{2713} Clustering...              {} communities detected", count);
+                    println!(
+                        "  \u{2713} Clustering...              {} communities detected",
+                        count
+                    );
                 }
                 Some(count)
             }
@@ -821,7 +855,10 @@ fn cmd_analyze(
         hasher.update(file.content.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
         if let Err(e) = db.set_file_hash(&file.relative_path, &hash) {
-            eprintln!("  Warning: failed to store hash for {}: {}", file.relative_path, e);
+            eprintln!(
+                "  Warning: failed to store hash for {}: {}",
+                file.relative_path, e
+            );
         }
     }
 
@@ -858,7 +895,10 @@ fn cmd_analyze(
     if !quiet {
         println!("  \u{2713} Done");
         println!();
-        println!("  Graph indexed \u{2014} {} nodes, {} edges", node_count, edge_count);
+        println!(
+            "  Graph indexed \u{2014} {} nodes, {} edges",
+            node_count, edge_count
+        );
         println!();
         println!("  Generated files:");
         println!("    CGX_SKILL.md   \u{2014} skill for any AI assistant (commit this)");
@@ -875,9 +915,11 @@ fn cmd_analyze(
 
         if hook_pc || hook_pco {
             println!();
-            println!("  Git hooks:  post-commit{} post-checkout{}",
+            println!(
+                "  Git hooks:  post-commit{} post-checkout{}",
                 if hook_pc { " \u{2713}" } else { "" },
-                if hook_pco { " \u{2713}" } else { "" });
+                if hook_pco { " \u{2713}" } else { "" }
+            );
         }
     }
 
@@ -899,7 +941,9 @@ fn cmd_analyze_watch(
     use std::sync::mpsc::{channel, RecvTimeoutError};
     use std::time::Duration;
 
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
 
     // Run initial analysis
     println!("  cgx analyze --watch  (press Ctrl+C to stop)\n");
@@ -967,14 +1011,9 @@ fn cmd_analyze_watch(
                         last_event_time = None;
                         println!("  Re-analyzing...\n");
                         if let Err(e) = cmd_analyze(
-                            repo_path,
-                            false, // force = false
+                            repo_path, false, // force = false
                             true,  // incremental = true
-                            quiet,
-                            no_git,
-                            no_cluster,
-                            no_hooks,
-                            verbose,
+                            quiet, no_git, no_cluster, no_hooks, verbose,
                         ) {
                             eprintln!("  Analysis error: {}", e);
                         }
@@ -992,7 +1031,9 @@ fn cmd_analyze_watch(
 }
 
 fn cmd_status(repo_path: &Path) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let reg = Registry::load()?;
 
     let entry = reg
@@ -1051,7 +1092,9 @@ fn cmd_list() -> anyhow::Result<()> {
 }
 
 fn cmd_hotspots(repo_path: &Path, top: usize) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
 
     let hotspots = db.get_hotspots(top)?;
@@ -1084,7 +1127,9 @@ fn cmd_hotspots(repo_path: &Path, top: usize) -> anyhow::Result<()> {
 }
 
 fn cmd_blame_graph(repo_path: &Path) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
 
     let authors = db.get_ownership()?;
@@ -1141,7 +1186,9 @@ fn cmd_export(
     out: Option<&Path>,
     max_nodes: usize,
 ) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
 
     let node_count = db.node_count()?;
@@ -1173,11 +1220,7 @@ fn cmd_export(
 
 // ── TUI / View ──────────────────────────────────────────────────────────
 
-fn cmd_view(
-    repo_path: &Path,
-    filter: Option<&str>,
-    community: Option<i64>,
-) -> anyhow::Result<()> {
+fn cmd_view(repo_path: &Path, filter: Option<&str>, community: Option<i64>) -> anyhow::Result<()> {
     let canonical = repo_path
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
@@ -1217,18 +1260,16 @@ fn run_tui(app: &mut App) -> anyhow::Result<()> {
     use crossterm::{
         event::EnableMouseCapture,
         execute,
-        terminal::{
-            disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
-            LeaveAlternateScreen,
-        },
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     };
     use ratatui::backend::CrosstermBackend;
     use ratatui::Terminal;
 
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)
-        .context("Failed to initialize terminal. Make sure you are running in an interactive terminal.")?;
+    let mut terminal = Terminal::new(backend).context(
+        "Failed to initialize terminal. Make sure you are running in an interactive terminal.",
+    )?;
 
     enable_raw_mode()
         .context("Failed to enable raw mode. cgx view requires an interactive terminal.")?;
@@ -1245,14 +1286,21 @@ fn run_tui(app: &mut App) -> anyhow::Result<()> {
 }
 
 // Returns the node kind string if the click lands on a legend entry.
-fn legend_kind_at_click(col: u16, row: u16, _term_width: u16, term_height: u16) -> Option<&'static str> {
+fn legend_kind_at_click(
+    col: u16,
+    row: u16,
+    _term_width: u16,
+    term_height: u16,
+) -> Option<&'static str> {
     const ENTRIES: &[&str] = &["Function", "Class", "File", "Module", "Type", "Author"];
     // Legend is drawn in inner_graph (x=1, y=1, h=term_height-2).
     // draw_legend places y_start = inner_y + inner_h - (len+1) = 1 + (term_height-2) - 7 = term_height-8
     let inner_h = term_height.saturating_sub(2);
     let y_start = 1u16 + inner_h.saturating_sub(ENTRIES.len() as u16 + 1);
     // glyph at col 2, kind text at col 4..4+kind.len()
-    if !(2..=14).contains(&col) { return None; }
+    if !(2..=14).contains(&col) {
+        return None;
+    }
     for (i, &kind) in ENTRIES.iter().enumerate() {
         if row == y_start + i as u16 {
             return Some(kind);
@@ -1279,8 +1327,12 @@ fn find_node_at_click(
     let inner_w = graph_block_w.saturating_sub(2);
     let inner_h = term_height.saturating_sub(2);
 
-    if col < inner_x || row < inner_y { return None; }
-    if col >= inner_x + inner_w || row >= inner_y + inner_h { return None; }
+    if col < inner_x || row < inner_y {
+        return None;
+    }
+    if col >= inner_x + inner_w || row >= inner_y + inner_h {
+        return None;
+    }
 
     // Viewport transform — must exactly match vp() in graph_widget.rs
     let zoom = app.zoom;
@@ -1315,8 +1367,8 @@ fn find_node_at_click(
             let (sx, sy) = to_screen(vx, vy);
 
             // Dot hit: 2-cell radius around the node glyph
-            let dot_hit = (col as i32 - sx as i32).abs() <= 1
-                && (row as i32 - sy as i32).abs() <= 1;
+            let dot_hit =
+                (col as i32 - sx as i32).abs() <= 1 && (row as i32 - sy as i32).abs() <= 1;
 
             // Label hit: label drawn at (sx+2, sy-1) — start must match render exactly
             let label_len = node.name.chars().count().min(16) as u16;
@@ -1326,8 +1378,7 @@ fn find_node_at_click(
                 && col < sx.saturating_add(2).saturating_add(label_len);
 
             if dot_hit || label_hit {
-                let dist_sq = (col as i32 - sx as i32).pow(2)
-                    + (row as i32 - sy as i32).pow(2);
+                let dist_sq = (col as i32 - sx as i32).pow(2) + (row as i32 - sy as i32).pow(2);
                 if best.is_none_or(|(d, _)| dist_sq < d) {
                     best = Some((dist_sq, node_idx));
                 }
@@ -1342,7 +1393,7 @@ fn run_event_loop<B: ratatui::backend::Backend>(
     app: &mut App,
     terminal: &mut ratatui::Terminal<B>,
 ) -> anyhow::Result<()> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton};
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 
     let tick_rate = Duration::from_millis(50);
     let mut layout_tick: u64 = 0;
@@ -1435,9 +1486,9 @@ fn run_event_loop<B: ratatui::backend::Backend>(
                             MouseEventKind::Down(MouseButton::Left) => {
                                 let size = terminal.size()?;
                                 // Check legend click first (bottom-left of graph panel)
-                                if let Some(kind) = legend_kind_at_click(
-                                    me.column, me.row, size.width, size.height,
-                                ) {
+                                if let Some(kind) =
+                                    legend_kind_at_click(me.column, me.row, size.width, size.height)
+                                {
                                     app.search_query = kind.to_string();
                                     app.apply_search_filter();
                                     app.reset_layout();
@@ -1466,81 +1517,83 @@ fn run_event_loop<B: ratatui::backend::Backend>(
                     _ => {}
                 },
                 AppMode::Search => match event {
-                    Event::Key(key) if key.kind != KeyEventKind::Release => {
-                        match key.code {
-                            KeyCode::Esc => {
-                                app.mode = AppMode::Normal;
-                                app.search_query.clear();
-                                app.apply_search_filter();
-                            }
-                            KeyCode::Enter => {
-                                app.apply_search_filter();
-                                app.mode = AppMode::Normal;
-                                app.reset_layout();
-                            }
-                            KeyCode::Char(c) => {
-                                app.search_query.push(c);
-                            }
-                            KeyCode::Backspace => {
-                                app.search_query.pop();
-                            }
-                            _ => {}
+                    Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
+                        KeyCode::Esc => {
+                            app.mode = AppMode::Normal;
+                            app.search_query.clear();
+                            app.apply_search_filter();
                         }
-                    }
+                        KeyCode::Enter => {
+                            app.apply_search_filter();
+                            app.mode = AppMode::Normal;
+                            app.reset_layout();
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 AppMode::FilterCommunity => match event {
-                    Event::Key(key) if key.kind != KeyEventKind::Release => {
-                        match key.code {
-                            KeyCode::Esc => {
-                                app.mode = AppMode::Normal;
-                                app.search_query.clear();
-                                app.set_community_filter(None);
-                            }
-                            KeyCode::Enter => {
-                                let input = app.search_query.trim().to_string();
-                                app.mode = AppMode::Normal;
-                                if input.is_empty() {
-                                    app.set_community_filter(None);
-                                } else if let Ok(c) = input.parse::<i64>() {
-                                    app.set_community_filter(Some(c));
-                                }
-                            }
-                            KeyCode::Char(c) => {
-                                app.search_query.push(c);
-                            }
-                            KeyCode::Backspace => {
-                                app.search_query.pop();
-                            }
-                            _ => {}
+                    Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
+                        KeyCode::Esc => {
+                            app.mode = AppMode::Normal;
+                            app.search_query.clear();
+                            app.set_community_filter(None);
                         }
-                    }
+                        KeyCode::Enter => {
+                            let input = app.search_query.trim().to_string();
+                            app.mode = AppMode::Normal;
+                            if input.is_empty() {
+                                app.set_community_filter(None);
+                            } else if let Ok(c) = input.parse::<i64>() {
+                                app.set_community_filter(Some(c));
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 AppMode::Help => match event {
-                    Event::Key(key) if key.kind != KeyEventKind::Release => {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
-                                app.mode = AppMode::Normal;
-                            }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                app.help_scroll = app.help_scroll.saturating_add(1);
-                            }
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                app.help_scroll = app.help_scroll.saturating_sub(1);
-                            }
-                            _ => {}
+                    Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
+                        KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                            app.mode = AppMode::Normal;
                         }
-                    }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            app.help_scroll = app.help_scroll.saturating_add(1);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            app.help_scroll = app.help_scroll.saturating_sub(1);
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 AppMode::EgoGraph => match event {
                     Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
-                        KeyCode::Char('r') => { app.reset_all(); }
-                        KeyCode::Char('q') | KeyCode::Esc => { app.should_quit = true; }
-                        _ => { app.mode = AppMode::Normal; }
+                        KeyCode::Char('r') => {
+                            app.reset_all();
+                        }
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            app.should_quit = true;
+                        }
+                        _ => {
+                            app.mode = AppMode::Normal;
+                        }
                     },
-                    _ => { app.mode = AppMode::Normal; }
+                    _ => {
+                        app.mode = AppMode::Normal;
+                    }
                 },
             }
         }
@@ -1639,29 +1692,21 @@ fn render_inspector(f: &mut ratatui::Frame, area: Rect, app: &App) {
             Span::raw(" "),
             Span::styled(
                 &node.name,
-                Style::default()
-                    .fg(kind_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(kind_color).add_modifier(Modifier::BOLD),
             ),
         ]));
         lines.push(Line::raw(""));
 
         if !node.path.is_empty() {
             lines.push(Line::from(vec![
-                Span::styled(
-                    "File:  ",
-                    Style::default().fg(Color::Rgb(100, 100, 120)),
-                ),
+                Span::styled("File:  ", Style::default().fg(Color::Rgb(100, 100, 120))),
                 Span::raw(&node.path),
             ]));
         }
 
         if node.line_start > 0 {
             lines.push(Line::from(vec![
-                Span::styled(
-                    "Lines: ",
-                    Style::default().fg(Color::Rgb(100, 100, 120)),
-                ),
+                Span::styled("Lines: ", Style::default().fg(Color::Rgb(100, 100, 120))),
                 Span::raw(format!("{}-{}", node.line_start, node.line_end)),
             ]));
         }
@@ -1673,10 +1718,7 @@ fn render_inspector(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let bar_filled = churn_pct * 20 / 100;
         let bar_empty = 20 - bar_filled;
         lines.push(Line::from(vec![
-            Span::styled(
-                "Churn: ",
-                Style::default().fg(Color::Rgb(100, 100, 120)),
-            ),
+            Span::styled("Churn: ", Style::default().fg(Color::Rgb(100, 100, 120))),
             Span::styled(
                 "\u{2588}".repeat(bar_filled),
                 Style::default().fg(Color::Rgb(239, 68, 68)),
@@ -1693,10 +1735,7 @@ fn render_inspector(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let bar_filled = coup_pct * 20 / 100;
         let bar_empty = 20 - bar_filled;
         lines.push(Line::from(vec![
-            Span::styled(
-                "Coup:  ",
-                Style::default().fg(Color::Rgb(100, 100, 120)),
-            ),
+            Span::styled("Coup:  ", Style::default().fg(Color::Rgb(100, 100, 120))),
             Span::styled(
                 "\u{2588}".repeat(bar_filled),
                 Style::default().fg(Color::Rgb(59, 130, 246)),
@@ -1710,10 +1749,7 @@ fn render_inspector(f: &mut ratatui::Frame, area: Rect, app: &App) {
 
         if node.community > 0 {
             lines.push(Line::from(vec![
-                Span::styled(
-                    "Comm:  ",
-                    Style::default().fg(Color::Rgb(100, 100, 120)),
-                ),
+                Span::styled("Comm:  ", Style::default().fg(Color::Rgb(100, 100, 120))),
                 Span::styled(
                     format!("#{}", node.community),
                     Style::default()
@@ -2009,7 +2045,9 @@ fn render_help_overlay(f: &mut ratatui::Frame, size: Rect, _app: &App) {
     let help_lines = vec![
         Line::styled(
             "  Navigation",
-            Style::default().fg(Color::Rgb(200, 200, 255)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Rgb(200, 200, 255))
+                .add_modifier(Modifier::BOLD),
         ),
         Line::raw("  Tab / j/↓     Next node"),
         Line::raw("  S-Tab / k/↑   Previous node"),
@@ -2021,7 +2059,9 @@ fn render_help_overlay(f: &mut ratatui::Frame, size: Rect, _app: &App) {
         Line::raw(""),
         Line::styled(
             "  Zoom & Pan",
-            Style::default().fg(Color::Rgb(200, 200, 255)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Rgb(200, 200, 255))
+                .add_modifier(Modifier::BOLD),
         ),
         Line::raw("  + / =         Zoom in"),
         Line::raw("  -             Zoom out"),
@@ -2057,28 +2097,44 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
 
 // ── HTTP Server / Web UI ────────────────────────────────────────────────
 
-fn find_web_dist() -> Option<PathBuf> {
-    let candidates = [
-        // Compile-time path (development)
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/web-ui/dist"),
-        // Relative to cwd
-        "packages/web-ui/dist",
-        // Relative to cwd (when running from workspace root)
-        "../packages/web-ui/dist",
-    ];
-    for candidate in &candidates {
-        let path = Path::new(candidate);
-        if path.join("index.html").exists() {
-            return Some(path.to_path_buf());
+// Web UI is embedded into the binary at compile time from packages/web-ui/dist/.
+// In debug builds rust-embed serves from the filesystem (fast iteration).
+// In release builds everything is bundled — no external files needed.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../../packages/web-ui/dist"]
+struct WebUiAssets;
+
+async fn serve_ui_asset(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match WebUiAssets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            (
+                [(axum::http::header::CONTENT_TYPE, mime.to_string())],
+                content.data.into_owned(),
+            )
+                .into_response()
+        }
+        None => {
+            // SPA fallback: unknown paths get index.html so client-side routing works
+            match WebUiAssets::get("index.html") {
+                Some(content) => (
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    content.data.into_owned(),
+                )
+                    .into_response(),
+                None => axum::http::StatusCode::NOT_FOUND.into_response(),
+            }
         }
     }
-    // Fall back to compile-time path even if index.html doesn't exist
-    Some(PathBuf::from(candidates[0]))
 }
 
 async fn cmd_serve(repo_path: &Path, port: u16, open_browser: bool) -> anyhow::Result<()> {
     use axum::{routing::get, routing::post, Router};
-    use tower_http::{cors::CorsLayer, services::ServeDir};
+    use tower_http::cors::CorsLayer;
 
     let canonical = repo_path
         .canonicalize()
@@ -2086,13 +2142,11 @@ async fn cmd_serve(repo_path: &Path, port: u16, open_browser: bool) -> anyhow::R
 
     let graph_path = canonical.clone();
 
-    // Handler: GET /api/graph
     let handle_graph = move || {
         let p = graph_path.clone();
         async move { api_graph(p).await }
     };
 
-    // Clone for snippet and open handlers
     let snippet_repo = canonical.clone();
     let open_repo = canonical.clone();
 
@@ -2119,21 +2173,8 @@ async fn cmd_serve(repo_path: &Path, port: u16, open_browser: bool) -> anyhow::R
         .route("/api/snippet", get(handle_snippet))
         .route("/api/open", get(handle_open))
         .route("/api/chat", post(handle_chat))
-        .layer(CorsLayer::permissive());
-
-    // Static file serving
-    let web_dist = find_web_dist()
-        .context("Could not find web UI dist directory. Run `npm run build` first.")?;
-
-    if !web_dist.join("index.html").exists() {
-        anyhow::bail!(
-            "Web UI not built. Run `npm run build` first.\n  Expected: {}",
-            web_dist.display()
-        );
-    }
-
-    let static_service = ServeDir::new(&web_dist);
-    let app = app.fallback_service(static_service);
+        .layer(CorsLayer::permissive())
+        .fallback(serve_ui_asset);
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -2195,7 +2236,9 @@ async fn api_repos() -> axum::response::Response {
     }
 }
 
-async fn api_repo_graph(axum::extract::Path(id): axum::extract::Path<String>) -> axum::response::Response {
+async fn api_repo_graph(
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
     match Registry::load() {
         Ok(reg) => match reg.find_by_id(&id) {
@@ -2222,6 +2265,9 @@ async fn api_repo_graph(axum::extract::Path(id): axum::extract::Path<String>) ->
 }
 
 fn build_graph_json(repo_path: &Path) -> anyhow::Result<serde_json::Value> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(repo_path)?;
     let nodes = db.get_all_nodes()?;
     let edges = db.get_all_edges()?;
@@ -2229,6 +2275,10 @@ fn build_graph_json(repo_path: &Path) -> anyhow::Result<serde_json::Value> {
     let lang_breakdown = db.get_language_breakdown()?;
     let node_count = db.node_count()?;
     let edge_count = db.edge_count()?;
+    let repo_name = canonical
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let communities_json: Vec<serde_json::Value> = communities
         .iter()
@@ -2279,6 +2329,7 @@ fn build_graph_json(repo_path: &Path) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::json!({
         "meta": {
             "repo_id": db.repo_id,
+            "repo_name": repo_name,
             "node_count": node_count,
             "edge_count": edge_count,
             "language_breakdown": lang_breakdown,
@@ -2317,7 +2368,9 @@ fn validate_repo_path(repo_root: &Path, user_path: &str) -> Option<PathBuf> {
 }
 
 fn contains_parent_dir(path: &str) -> bool {
-    Path::new(path).components().any(|c| matches!(c, std::path::Component::ParentDir))
+    Path::new(path)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 async fn api_snippet(
@@ -2351,11 +2404,7 @@ async fn api_snippet(
     let content = match std::fs::read_to_string(&resolved) {
         Ok(c) => c,
         Err(_) => {
-            return (
-                axum::http::StatusCode::NOT_FOUND,
-                "Cannot read file",
-            )
-                .into_response();
+            return (axum::http::StatusCode::NOT_FOUND, "Cannot read file").into_response();
         }
     };
 
@@ -2401,18 +2450,31 @@ async fn api_snippet(
 
 fn detect_snippet_language(path: &str) -> &str {
     let lower = path.to_lowercase();
-    if lower.ends_with(".ts") || lower.ends_with(".tsx") { "typescript" }
-    else if lower.ends_with(".js") || lower.ends_with(".jsx") || lower.ends_with(".mjs") { "javascript" }
-    else if lower.ends_with(".py") { "python" }
-    else if lower.ends_with(".rs") { "rust" }
-    else if lower.ends_with(".go") { "go" }
-    else if lower.ends_with(".java") { "java" }
-    else if lower.ends_with(".cs") { "csharp" }
-    else if lower.ends_with(".json") { "json" }
-    else if lower.ends_with(".md") { "markdown" }
-    else if lower.ends_with(".html") { "html" }
-    else if lower.ends_with(".css") { "css" }
-    else { "text" }
+    if lower.ends_with(".ts") || lower.ends_with(".tsx") {
+        "typescript"
+    } else if lower.ends_with(".js") || lower.ends_with(".jsx") || lower.ends_with(".mjs") {
+        "javascript"
+    } else if lower.ends_with(".py") {
+        "python"
+    } else if lower.ends_with(".rs") {
+        "rust"
+    } else if lower.ends_with(".go") {
+        "go"
+    } else if lower.ends_with(".java") {
+        "java"
+    } else if lower.ends_with(".cs") {
+        "csharp"
+    } else if lower.ends_with(".json") {
+        "json"
+    } else if lower.ends_with(".md") {
+        "markdown"
+    } else if lower.ends_with(".html") {
+        "html"
+    } else if lower.ends_with(".css") {
+        "css"
+    } else {
+        "text"
+    }
 }
 
 async fn api_open(
@@ -2481,13 +2543,14 @@ async fn cmd_view_web(
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
 
-    // Verify the repo is indexed
-    let db = GraphDb::open(&canonical)?;
-    if db.node_count()? == 0 {
-        anyhow::bail!(
-            "No indexed graph found at {}. Run `cgx analyze` first.",
-            canonical.display()
-        );
+    // Auto-analyze if not indexed
+    let needs_index = match GraphDb::open(&canonical) {
+        Ok(db) => db.node_count().unwrap_or(0) == 0,
+        Err(_) => true,
+    };
+    if needs_index {
+        eprintln!("  No indexed graph found — running analysis first...");
+        cmd_analyze(&canonical, false, false, false, false, false, false, false)?;
     }
 
     let port = 7373u16;
@@ -2534,15 +2597,19 @@ async fn cmd_view_web(
 // ── Query / Summary / Setup ─────────────────────────────────────────────
 
 fn cmd_summary(repo_path: &Path) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
     let data = cgx_engine::build_skill_data(&db)?;
 
     println!();
     println!("  REPOSITORY SUMMARY");
     println!("  {}", "\u{2500}".repeat(50));
-    println!("  Nodes:     {} ({} functions, {} classes, {} files)",
-        data.node_count, data.function_count, data.class_count, data.file_count);
+    println!(
+        "  Nodes:     {} ({} functions, {} classes, {} files)",
+        data.node_count, data.function_count, data.class_count, data.file_count
+    );
     println!("  Edges:     {}", data.edge_count);
     println!("  Languages: {}", data.language_breakdown);
     println!("  Indexed:   {}", data.indexed_at);
@@ -2559,7 +2626,10 @@ fn cmd_summary(repo_path: &Path) -> anyhow::Result<()> {
         println!();
         println!("  HOTSPOTS (high churn × coupling)");
         for n in &data.hotspots {
-            println!("    {} — churn {:.2}, {} callers", n.path, n.churn, n.in_degree);
+            println!(
+                "    {} — churn {:.2}, {} callers",
+                n.path, n.churn, n.in_degree
+            );
         }
     }
 
@@ -2592,11 +2662,13 @@ fn resolve_id(all_nodes: &[cgx_engine::Node], name_or_id: &str) -> Option<String
         return Some(name_or_id.to_string());
     }
     let query = name_or_id.to_lowercase();
-    all_nodes.iter()
+    all_nodes
+        .iter()
         .find(|n| n.name.to_lowercase() == query)
         .map(|n| n.id.clone())
         .or_else(|| {
-            all_nodes.iter()
+            all_nodes
+                .iter()
                 .find(|n| n.name.to_lowercase().contains(&query))
                 .map(|n| n.id.clone())
         })
@@ -2609,11 +2681,36 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
         .unwrap_or_else(|_| "cgx".to_string());
 
     let editors: Vec<(&str, String, &str, &str)> = vec![
-        ("Claude Code", format!("{}/.claude/settings.json", home), "mcpServers", "mcpServers"),
-        ("Cursor", format!("{}/.cursor/mcp.json", home), "mcpServers", "mcpServers"),
-        ("VS Code", format!("{}/.vscode/settings.json", home), "mcp.servers", "mcp.servers"),
-        ("Windsurf", format!("{}/.windsurf/mcp.json", home), "mcpServers", "mcpServers"),
-        ("Zed", format!("{}/.config/zed/settings.json", home), "context_servers", "context_servers"),
+        (
+            "Claude Code",
+            format!("{}/.claude/settings.json", home),
+            "mcpServers",
+            "mcpServers",
+        ),
+        (
+            "Cursor",
+            format!("{}/.cursor/mcp.json", home),
+            "mcpServers",
+            "mcpServers",
+        ),
+        (
+            "VS Code",
+            format!("{}/.vscode/settings.json", home),
+            "mcp.servers",
+            "mcp.servers",
+        ),
+        (
+            "Windsurf",
+            format!("{}/.windsurf/mcp.json", home),
+            "mcpServers",
+            "mcpServers",
+        ),
+        (
+            "Zed",
+            format!("{}/.config/zed/settings.json", home),
+            "context_servers",
+            "context_servers",
+        ),
     ];
 
     println!("  cgx setup \u{2014} configuring AI editor integrations\n");
@@ -2623,7 +2720,10 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
 
         if dry_run {
             if exists {
-                println!("  \u{2713} {} \u{2014} {} (would update)", name, config_path);
+                println!(
+                    "  \u{2713} {} \u{2014} {} (would update)",
+                    name, config_path
+                );
             } else {
                 println!("  \u{2717} {} \u{2014} not detected", name);
             }
@@ -2641,8 +2741,13 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
                 // Navigate to the correct nested key (e.g., mcp.servers -> {"cgx": ...})
                 let parts: Vec<&str> = merge_key.split('.').collect();
                 if parts.len() == 2 {
-                    let inner = json.as_object_mut()
-                        .and_then(|m| m.entry(parts[0]).or_insert_with(|| serde_json::json!({})).as_object_mut())
+                    let inner = json
+                        .as_object_mut()
+                        .and_then(|m| {
+                            m.entry(parts[0])
+                                .or_insert_with(|| serde_json::json!({}))
+                                .as_object_mut()
+                        })
                         .map(|m| m.entry(parts[1]).or_insert_with(|| serde_json::json!({})));
                     if let Some(target) = inner {
                         target["cgx"] = serde_json::json!({
@@ -2665,7 +2770,10 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
                 }
             }
         }
-        println!("  \u{26A0} {} \u{2014} could not parse {} (not valid JSON)", name, config_path);
+        println!(
+            "  \u{26A0} {} \u{2014} could not parse {} (not valid JSON)",
+            name, config_path
+        );
     }
 
     println!();
@@ -2680,7 +2788,7 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
     println!("    {{");
     println!("      \"mcpServers\": {{");
     println!("        \"cgx\": {{");
-    println!("          \"command\": \"{}\"," , cgx_path);
+    println!("          \"command\": \"{}\",", cgx_path);
     println!("          \"args\": [\"mcp\"],");
     println!("          \"env\": {{}}");
     println!("        }}");
@@ -2691,7 +2799,7 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
     println!("    {{");
     println!("      \"mcp.servers\": {{");
     println!("        \"cgx\": {{");
-    println!("          \"command\": \"{}\"," , cgx_path);
+    println!("          \"command\": \"{}\",", cgx_path);
     println!("          \"args\": [\"mcp\"],");
     println!("          \"env\": {{}}");
     println!("        }}");
@@ -2702,7 +2810,7 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
     println!("    {{");
     println!("      \"context_servers\": {{");
     println!("        \"cgx\": {{");
-    println!("          \"command\": \"{}\"," , cgx_path);
+    println!("          \"command\": \"{}\",", cgx_path);
     println!("          \"args\": [\"mcp\"],");
     println!("          \"env\": {{}}");
     println!("        }}");
@@ -2818,9 +2926,14 @@ fn cmd_query_find(name: String, kind: Option<String>, repo: Option<PathBuf>) -> 
     let db = GraphDb::open(&resolve_repo(repo))?;
     let all = db.get_all_nodes()?;
     let query = name.to_lowercase();
-    let mut results: Vec<_> = all.iter()
+    let mut results: Vec<_> = all
+        .iter()
         .filter(|n| {
-            if let Some(ref k) = kind { if n.kind != *k { return false; } }
+            if let Some(ref k) = kind {
+                if n.kind != *k {
+                    return false;
+                }
+            }
             n.name.to_lowercase().contains(&query) || n.id.to_lowercase().contains(&query)
         })
         .collect();
@@ -2828,7 +2941,9 @@ fn cmd_query_find(name: String, kind: Option<String>, repo: Option<PathBuf>) -> 
     results.sort_by(|a, b| {
         let a_exact = a.name.to_lowercase() == query;
         let b_exact = b.name.to_lowercase() == query;
-        b_exact.cmp(&a_exact).then_with(|| b.in_degree.cmp(&a.in_degree))
+        b_exact
+            .cmp(&a_exact)
+            .then_with(|| b.in_degree.cmp(&a.in_degree))
     });
     for n in results.iter().take(20) {
         println!("  {}  {:<12}  {}:{}", n.kind, n.name, n.path, n.line_start);
@@ -2839,7 +2954,8 @@ fn cmd_query_find(name: String, kind: Option<String>, repo: Option<PathBuf>) -> 
 fn cmd_query_deps(name: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
     let db = GraphDb::open(&resolve_repo(repo))?;
     let all = db.get_all_nodes()?;
-    let node_id = resolve_id(&all, &name).ok_or_else(|| anyhow::anyhow!("Node not found: {}", name))?;
+    let node_id =
+        resolve_id(&all, &name).ok_or_else(|| anyhow::anyhow!("Node not found: {}", name))?;
     let neighbors = db.get_neighbors(&node_id, 1)?;
     for n in neighbors {
         println!("  {}  {:<12}  {}", n.kind, n.name, n.path);
@@ -2850,11 +2966,23 @@ fn cmd_query_deps(name: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
 fn cmd_query_blast_radius(name: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
     let db = GraphDb::open(&resolve_repo(repo))?;
     let all = db.get_all_nodes()?;
-    let node_id = resolve_id(&all, &name).ok_or_else(|| anyhow::anyhow!("Node not found: {}", name))?;
+    let node_id =
+        resolve_id(&all, &name).ok_or_else(|| anyhow::anyhow!("Node not found: {}", name))?;
     let neighbors = db.get_neighbors(&node_id, 3)?;
     let count = neighbors.len();
-    let risk = if count > 50 { "CRITICAL" } else if count > 20 { "HIGH" } else if count > 5 { "MEDIUM" } else { "LOW" };
-    println!("  Blast radius: {} ({} affected, risk: {})", name, count, risk);
+    let risk = if count > 50 {
+        "CRITICAL"
+    } else if count > 20 {
+        "HIGH"
+    } else if count > 5 {
+        "MEDIUM"
+    } else {
+        "LOW"
+    };
+    println!(
+        "  Blast radius: {} ({} affected, risk: {})",
+        name, count, risk
+    );
     for n in neighbors.iter().take(15) {
         println!("    {}  {}", n.kind, n.name);
     }
@@ -2864,14 +2992,25 @@ fn cmd_query_blast_radius(name: String, repo: Option<PathBuf>) -> anyhow::Result
 fn cmd_query_chain(path: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
     let db = GraphDb::open(&resolve_repo(repo))?;
     let parts: Vec<&str> = path.split("->").map(|s| s.trim()).collect();
-    if parts.len() != 2 { anyhow::bail!("Format: \"<from> -> <to>\""); }
+    if parts.len() != 2 {
+        anyhow::bail!("Format: \"<from> -> <to>\"");
+    }
     let all = db.get_all_nodes()?;
-    let from_id = resolve_id(&all, parts[0]).ok_or_else(|| anyhow::anyhow!("From not found: {}", parts[0]))?;
-    let to_id = resolve_id(&all, parts[1]).ok_or_else(|| anyhow::anyhow!("To not found: {}", parts[1]))?;
-    let node_map: std::collections::HashMap<&str, &cgx_engine::Node> = all.iter().map(|n| (n.id.as_str(), n)).collect();
+    let from_id = resolve_id(&all, parts[0])
+        .ok_or_else(|| anyhow::anyhow!("From not found: {}", parts[0]))?;
+    let to_id =
+        resolve_id(&all, parts[1]).ok_or_else(|| anyhow::anyhow!("To not found: {}", parts[1]))?;
+    let node_map: std::collections::HashMap<&str, &cgx_engine::Node> =
+        all.iter().map(|n| (n.id.as_str(), n)).collect();
     // Build name -> [id] lookup to resolve short callee names in CALLS edges
-    let mut name_to_ids: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
-    for n in &all { name_to_ids.entry(n.name.as_str()).or_default().push(n.id.as_str()); }
+    let mut name_to_ids: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for n in &all {
+        name_to_ids
+            .entry(n.name.as_str())
+            .or_default()
+            .push(n.id.as_str());
+    }
     let edges = db.get_all_edges()?;
     // Build adjacency list, resolving CALLS edge destinations from short names to node IDs
     let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -2898,11 +3037,16 @@ fn cmd_query_chain(path: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
         if current == to_id {
             let mut path_nodes = vec![current.clone()];
             let mut cur = current.clone();
-            while let Some(p) = parent.get(&cur) { path_nodes.push(p.clone()); cur = p.clone(); }
+            while let Some(p) = parent.get(&cur) {
+                path_nodes.push(p.clone());
+                cur = p.clone();
+            }
             path_nodes.reverse();
             println!("  Chain ({} hops):", path_nodes.len() - 1);
             for (i, id) in path_nodes.iter().enumerate() {
-                if let Some(n) = node_map.get(id.as_str()) { println!("    {}. {} ({})", i + 1, n.name, n.kind); }
+                if let Some(n) = node_map.get(id.as_str()) {
+                    println!("    {}. {} ({})", i + 1, n.name, n.kind);
+                }
             }
             return Ok(());
         }
@@ -2925,13 +3069,17 @@ fn cmd_query_owners(path: String, repo: Option<PathBuf>) -> anyhow::Result<()> {
     let all_edges = db.get_all_edges()?;
     let file_id = format!("file:{}", path);
 
-    let owners: Vec<_> = all_edges.iter()
+    let owners: Vec<_> = all_edges
+        .iter()
         .filter(|e| e.kind == "OWNS" && e.dst == file_id)
         .filter_map(|e| all_nodes.iter().find(|n| n.id == e.src))
         .collect();
 
     if owners.is_empty() {
-        println!("No ownership data for {}. Run `cgx analyze` on a git repo first.", path);
+        println!(
+            "No ownership data for {}. Run `cgx analyze` on a git repo first.",
+            path
+        );
     } else {
         println!("  Ownership for {}:", path);
         for n in owners {
@@ -2945,7 +3093,11 @@ fn cmd_query_search(query: String, limit: u32, repo: Option<PathBuf>) -> anyhow:
     let db = GraphDb::open(&resolve_repo(repo))?;
     let all = db.get_all_nodes()?;
     let q = query.to_lowercase();
-    for n in all.iter().filter(|n| n.name.to_lowercase().contains(&q) || n.path.to_lowercase().contains(&q)).take(limit as usize) {
+    for n in all
+        .iter()
+        .filter(|n| n.name.to_lowercase().contains(&q) || n.path.to_lowercase().contains(&q))
+        .take(limit as usize)
+    {
         println!("  {}  {:<20}  {}", n.kind, n.name, n.path);
     }
     Ok(())
@@ -2955,8 +3107,11 @@ fn cmd_query_community(id: i64, repo: Option<PathBuf>) -> anyhow::Result<()> {
     let db = GraphDb::open(&resolve_repo(repo))?;
     let nodes = db.get_nodes_by_community(id)?;
     let communities = db.get_communities()?;
-    let label = communities.iter().find(|(cid, ..)| *cid == id)
-        .map(|(_, l, _, _)| l.clone()).unwrap_or_else(|| format!("community-{}", id));
+    let label = communities
+        .iter()
+        .find(|(cid, ..)| *cid == id)
+        .map(|(_, l, _, _)| l.clone())
+        .unwrap_or_else(|| format!("community-{}", id));
     println!("  Community #{} — {} ({} nodes)", id, label, nodes.len());
     for n in nodes.iter().take(30) {
         println!("    {}  {:<20}  {}", n.kind, n.name, n.path);
@@ -2967,7 +3122,8 @@ fn cmd_query_community(id: i64, repo: Option<PathBuf>) -> anyhow::Result<()> {
 fn cmd_query_dead_code(repo: Option<PathBuf>) -> anyhow::Result<()> {
     let db = GraphDb::open(&resolve_repo(repo))?;
     let all = db.get_all_nodes()?;
-    let dead: Vec<_> = all.iter()
+    let dead: Vec<_> = all
+        .iter()
         .filter(|n| n.in_degree == 0 && n.kind != "File" && n.kind != "Author")
         .collect();
     if dead.is_empty() {
@@ -2984,21 +3140,33 @@ fn cmd_query_dead_code(repo: Option<PathBuf>) -> anyhow::Result<()> {
 // ── GitHub Pages Publisher ───────────────────────────────────────────────
 
 fn cmd_publish(repo_path: &Path, dry_run: bool, badge: bool) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
 
     // Determine GitHub Pages URL from remote
     let repo = git2::Repository::open(&canonical);
     let remote_url = repo.as_ref().ok().and_then(|r| {
-        r.find_remote("origin").ok().and_then(|remote| remote.url().map(|s| s.to_string()))
+        r.find_remote("origin")
+            .ok()
+            .and_then(|remote| remote.url().map(|s| s.to_string()))
     });
 
     let pages_url = remote_url.as_ref().and_then(|url| {
         if let Some(rest) = url.strip_prefix("https://github.com/") {
             let path = rest.strip_suffix(".git").unwrap_or(rest);
-            Some(format!("https://{}.github.io/{}", path.split('/').next()?, path.split('/').nth(1)?))
+            Some(format!(
+                "https://{}.github.io/{}",
+                path.split('/').next()?,
+                path.split('/').nth(1)?
+            ))
         } else if let Some(rest) = url.strip_prefix("git@github.com:") {
             let path = rest.strip_suffix(".git").unwrap_or(rest);
-            Some(format!("https://{}.github.io/{}", path.split('/').next()?, path.split('/').nth(1)?))
+            Some(format!(
+                "https://{}.github.io/{}",
+                path.split('/').next()?,
+                path.split('/').nth(1)?
+            ))
         } else {
             None
         }
@@ -3009,8 +3177,10 @@ fn cmd_publish(repo_path: &Path, dry_run: bool, badge: bool) -> anyhow::Result<(
         println!("  Add this badge to your README.md:");
         println!();
         if let Some(ref url) = pages_url {
-            println!("  [![cgx graph](https://img.shields.io/badge/cgx-graph-blue)]({})"
-                , url);
+            println!(
+                "  [![cgx graph](https://img.shields.io/badge/cgx-graph-blue)]({})",
+                url
+            );
             println!();
             println!("  Your graph will be published at: {}", url);
         } else {
@@ -3022,24 +3192,22 @@ fn cmd_publish(repo_path: &Path, dry_run: bool, badge: bool) -> anyhow::Result<(
         return Ok(());
     }
 
-    // Step 1: Build web UI
-    eprintln!("  Building web UI...");
-    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-    // Find the workspace root (where package.json with workspaces config is)
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let status = std::process::Command::new(npm)
-        .arg("run")
-        .arg("build")
-        .current_dir(&workspace_root)
-        .status()
-        .context(format!("Failed to run npm build in {}. Is npm installed?", workspace_root.display()))?;
-    if !status.success() {
-        anyhow::bail!("npm build failed");
+    // Step 1: Extract embedded web UI assets to a temp directory
+    let tmp_dir = std::env::temp_dir().join("cgx-publish-ui");
+    if tmp_dir.exists() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
+    std::fs::create_dir_all(&tmp_dir)?;
+    for file_path in WebUiAssets::iter() {
+        let file_data = WebUiAssets::get(file_path.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("Embedded asset missing: {}", file_path))?;
+        let dest = tmp_dir.join(file_path.as_ref());
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dest, file_data.data)?;
+    }
+    let dist_dir = tmp_dir;
 
     // Step 2: Generate graph JSON
     eprintln!("  Generating graph JSON...");
@@ -3049,20 +3217,15 @@ fn cmd_publish(repo_path: &Path, dry_run: bool, badge: bool) -> anyhow::Result<(
     }
     let graph_json = cgx_engine::export_json(&db)?;
 
-    // Step 3: Find dist directory
-    let dist_dir = workspace_root.join("packages/web-ui/dist");
     let index_path = dist_dir.join("index.html");
     if !index_path.exists() {
-        anyhow::bail!("dist/index.html not found. npm build may have failed.");
+        anyhow::bail!("dist/index.html not found after copy");
     }
 
     // Step 4: Inject graph data into index.html
     eprintln!("  Injecting graph data...");
     let mut html = std::fs::read_to_string(&index_path)?;
-    let inject_script = format!(
-        "<script>window.__CGX_GRAPH__ = {};</script>",
-        graph_json
-    );
+    let inject_script = format!("<script>window.__CGX_GRAPH__ = {};</script>", graph_json);
     // Insert before closing </head> or </body>
     if let Some(pos) = html.find("</head>") {
         html.insert_str(pos, &format!("{}\n  ", inject_script));
@@ -3104,11 +3267,133 @@ fn cmd_publish(repo_path: &Path, dry_run: bool, badge: bool) -> anyhow::Result<(
     Ok(())
 }
 
+async fn cmd_share(repo_path: &Path, token: Option<&str>, public: bool) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
+    // Resolve GitHub token: --token > GITHUB_TOKEN > gh CLI
+    let gh_token = token
+        .map(|t| t.to_string())
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .or_else(|| {
+            std::process::Command::new("gh")
+                .args(["auth", "token"])
+                .output()
+                .ok()
+                .and_then(|o| {
+                    if o.status.success() {
+                        String::from_utf8(o.stdout)
+                            .ok()
+                            .map(|s| s.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No GitHub token found.\n  Set GITHUB_TOKEN, pass --token, or run `gh auth login`."
+            )
+        })?;
+
+    eprintln!("  Generating graph...");
+    let db = GraphDb::open(&canonical)?;
+    if db.node_count()? == 0 {
+        anyhow::bail!("No indexed graph. Run `cgx analyze` first.");
+    }
+    let graph_json = cgx_engine::export_json(&db)?;
+
+    let repo_name = canonical
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "repo".to_string());
+
+    eprintln!("  Uploading graph to GitHub Gist...");
+
+    let client = reqwest::Client::builder().user_agent("cgx-cli").build()?;
+
+    // Check if a cgx Gist already exists for this repo (description match)
+    let description = format!("cgx graph — {}", repo_name);
+
+    // Create or update Gist
+    let body = serde_json::json!({
+        "description": description,
+        "public": public,
+        "files": {
+            "cgx-graph.json": {
+                "content": graph_json
+            }
+        }
+    });
+
+    let resp = client
+        .post("https://api.github.com/gists")
+        .header("Authorization", format!("token {}", gh_token))
+        .header("Accept", "application/vnd.github+json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("GitHub API error {}: {}", status, text);
+    }
+
+    let gist: serde_json::Value = resp.json().await?;
+    let gist_id = gist["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No gist id in response"))?;
+    let owner = gist["owner"]["login"].as_str().unwrap_or("unknown");
+
+    let raw_url = format!(
+        "https://gist.githubusercontent.com/{}/{}/raw/cgx-graph.json",
+        owner, gist_id
+    );
+
+    // The hosted viewer is the cgx GitHub Pages site — it reads ?data= to load remote JSON
+    let viewer_url = format!(
+        "https://AayushBahukhandi.github.io/cgx/?data={}",
+        urlenccode(&raw_url)
+    );
+
+    println!();
+    println!("  \u{2713} Graph shared!");
+    println!();
+    println!("  Viewer URL (share this):");
+    println!("  {}", viewer_url);
+    println!();
+    println!("  Raw JSON:  {}", raw_url);
+    println!("  Gist:      https://gist.github.com/{}/{}", owner, gist_id);
+    if !public {
+        println!();
+        println!("  (secret Gist — only people with the URL can view it)");
+    }
+    println!();
+    Ok(())
+}
+
+fn urlenccode(s: &str) -> String {
+    s.chars().fold(String::new(), |mut acc, c| {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => acc.push(c),
+            _ => {
+                for byte in c.to_string().as_bytes() {
+                    acc.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+        acc
+    })
+}
+
 fn push_to_gh_pages(repo_path: &Path, dist_dir: &Path) -> anyhow::Result<()> {
     let repo = git2::Repository::open(repo_path)
         .context("Failed to open git repo. Make sure you're in a git repository.")?;
 
-    let mut remote = repo.find_remote("origin")
+    let mut remote = repo
+        .find_remote("origin")
         .context("No 'origin' remote found. Add a GitHub remote first.")?;
 
     // Build tree from dist files
@@ -3118,7 +3403,8 @@ fn push_to_gh_pages(repo_path: &Path, dist_dir: &Path) -> anyhow::Result<()> {
     let tree = repo.find_tree(tree_oid)?;
 
     // Get or create gh-pages ref
-    let signature = repo.signature()
+    let signature = repo
+        .signature()
         .context("Git user config not set. Run: git config user.name / user.email")?;
 
     let parent_commit = repo
@@ -3162,7 +3448,8 @@ fn push_to_gh_pages(repo_path: &Path, dist_dir: &Path) -> anyhow::Result<()> {
     });
 
     push_opts.remote_callbacks(callbacks);
-    remote.push(&[refspec], Some(&mut push_opts))
+    remote
+        .push(&[refspec], Some(&mut push_opts))
         .context("Failed to push to gh-pages. Check your GitHub credentials.")?;
 
     Ok(())
@@ -3183,7 +3470,10 @@ fn collect_files(
         } else {
             let content = std::fs::read(&path)?;
             let oid = repo.blob(&content)?;
-            let rel_path = path.strip_prefix(base)?.to_string_lossy().replace('\\', "/");
+            let rel_path = path
+                .strip_prefix(base)?
+                .to_string_lossy()
+                .replace('\\', "/");
             tree_builder.insert(&rel_path, oid, 0o100644)?;
         }
     }
@@ -3193,7 +3483,9 @@ fn collect_files(
 // ── Graph Diff + Impact ─────────────────────────────────────────────────
 
 fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
 
     // Get current graph from DuckDB
     let db = GraphDb::open(&canonical)?;
@@ -3205,41 +3497,47 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
     let all_edges = db.get_all_edges()?;
 
     // Build the "after" snapshot from the indexed DB
-    let after_nodes: Vec<cgx_engine::NodeDef> = all_nodes.iter().map(|n| cgx_engine::NodeDef {
-        id: n.id.clone(),
-        kind: match n.kind.as_str() {
-            "Function" => cgx_engine::NodeKind::Function,
-            "Class" => cgx_engine::NodeKind::Class,
-            "File" => cgx_engine::NodeKind::File,
-            "Module" => cgx_engine::NodeKind::Module,
-            "Variable" => cgx_engine::NodeKind::Variable,
-            "Type" => cgx_engine::NodeKind::Type,
-            "Author" => cgx_engine::NodeKind::Author,
-            _ => cgx_engine::NodeKind::File,
-        },
-        name: n.name.clone(),
-        path: n.path.clone(),
-        line_start: n.line_start,
-        line_end: n.line_end,
-        ..Default::default()
-    }).collect();
+    let after_nodes: Vec<cgx_engine::NodeDef> = all_nodes
+        .iter()
+        .map(|n| cgx_engine::NodeDef {
+            id: n.id.clone(),
+            kind: match n.kind.as_str() {
+                "Function" => cgx_engine::NodeKind::Function,
+                "Class" => cgx_engine::NodeKind::Class,
+                "File" => cgx_engine::NodeKind::File,
+                "Module" => cgx_engine::NodeKind::Module,
+                "Variable" => cgx_engine::NodeKind::Variable,
+                "Type" => cgx_engine::NodeKind::Type,
+                "Author" => cgx_engine::NodeKind::Author,
+                _ => cgx_engine::NodeKind::File,
+            },
+            name: n.name.clone(),
+            path: n.path.clone(),
+            line_start: n.line_start,
+            line_end: n.line_end,
+            ..Default::default()
+        })
+        .collect();
 
-    let after_edges: Vec<cgx_engine::EdgeDef> = all_edges.iter().map(|e| cgx_engine::EdgeDef {
-        src: e.src.clone(),
-        dst: e.dst.clone(),
-        kind: match e.kind.as_str() {
-            "CALLS" => cgx_engine::EdgeKind::Calls,
-            "IMPORTS" => cgx_engine::EdgeKind::Imports,
-            "INHERITS" => cgx_engine::EdgeKind::Inherits,
-            "EXPORTS" => cgx_engine::EdgeKind::Exports,
-            "CO_CHANGES" => cgx_engine::EdgeKind::CoChanges,
-            "OWNS" => cgx_engine::EdgeKind::Owns,
-            "DEPENDS_ON" => cgx_engine::EdgeKind::DependsOn,
-            _ => cgx_engine::EdgeKind::Calls,
-        },
-        weight: e.weight,
-        confidence: e.confidence,
-    }).collect();
+    let after_edges: Vec<cgx_engine::EdgeDef> = all_edges
+        .iter()
+        .map(|e| cgx_engine::EdgeDef {
+            src: e.src.clone(),
+            dst: e.dst.clone(),
+            kind: match e.kind.as_str() {
+                "CALLS" => cgx_engine::EdgeKind::Calls,
+                "IMPORTS" => cgx_engine::EdgeKind::Imports,
+                "INHERITS" => cgx_engine::EdgeKind::Inherits,
+                "EXPORTS" => cgx_engine::EdgeKind::Exports,
+                "CO_CHANGES" => cgx_engine::EdgeKind::CoChanges,
+                "OWNS" => cgx_engine::EdgeKind::Owns,
+                "DEPENDS_ON" => cgx_engine::EdgeKind::DependsOn,
+                _ => cgx_engine::EdgeKind::Calls,
+            },
+            weight: e.weight,
+            confidence: e.confidence,
+        })
+        .collect();
 
     let after = cgx_engine::GraphSnapshot {
         nodes: after_nodes,
@@ -3270,10 +3568,7 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
         diff.removed_nodes.len(),
         diff.removed_edges.len()
     );
-    println!(
-        "  ~ Modified: {} nodes",
-        diff.modified_nodes.len()
-    );
+    println!("  ~ Modified: {} nodes", diff.modified_nodes.len());
 
     if !diff.added_nodes.is_empty() {
         println!();
@@ -3296,10 +3591,23 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
         println!("  NEW EDGES (showing first 10):");
         for e in diff.added_edges.iter().take(10) {
             if let (Some(src_n), Some(dst_n)) = (
-                before.nodes.iter().find(|n| n.id == e.src).or(after.nodes.iter().find(|n| n.id == e.src)),
-                before.nodes.iter().find(|n| n.id == e.dst).or(after.nodes.iter().find(|n| n.id == e.dst)),
+                before
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == e.src)
+                    .or(after.nodes.iter().find(|n| n.id == e.src)),
+                before
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == e.dst)
+                    .or(after.nodes.iter().find(|n| n.id == e.dst)),
             ) {
-                println!("    + {} → {} ({})", src_n.name, dst_n.name, e.kind.as_str());
+                println!(
+                    "    + {} → {} ({})",
+                    src_n.name,
+                    dst_n.name,
+                    e.kind.as_str()
+                );
             }
         }
     }
@@ -3312,7 +3620,12 @@ fn cmd_diff(repo_path: &Path, commit: &str) -> anyhow::Result<()> {
                 before.nodes.iter().find(|n| n.id == e.src),
                 after.nodes.iter().find(|n| n.id == e.dst),
             ) {
-                println!("    - {} → {} ({})", src_n.name, dst_n.name, e.kind.as_str());
+                println!(
+                    "    - {} → {} ({})",
+                    src_n.name,
+                    dst_n.name,
+                    e.kind.as_str()
+                );
             }
         }
     }
@@ -3329,13 +3642,18 @@ fn parse_duration_days(s: &str) -> anyhow::Result<u32> {
         .trim_end_matches("days")
         .trim_end_matches("DAY")
         .trim_end_matches("DAYS");
-    num_part
-        .parse::<u32>()
-        .map_err(|_| anyhow::anyhow!("invalid duration: '{}'. Expected a number like '7' or '7d'", s))
+    num_part.parse::<u32>().map_err(|_| {
+        anyhow::anyhow!(
+            "invalid duration: '{}'. Expected a number like '7' or '7d'",
+            s
+        )
+    })
 }
 
 fn cmd_impact(repo_path: &Path, since_days: u32) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
 
     eprintln!("  Analyzing changes in the last {} days...", since_days);
     let report = cgx_engine::compute_impact(&canonical, since_days)?;
@@ -3359,7 +3677,9 @@ fn cmd_impact(repo_path: &Path, since_days: u32) -> anyhow::Result<()> {
         for f in report.changed_files.iter().take(15) {
             let mut node_count = 0;
             for n in &report.changed_nodes {
-                if &n.path == f { node_count += 1; }
+                if &n.path == f {
+                    node_count += 1;
+                }
             }
             println!("    {} ({} nodes)", f, node_count);
         }
@@ -3375,13 +3695,21 @@ fn cmd_impact(repo_path: &Path, since_days: u32) -> anyhow::Result<()> {
             println!("    → {} ({})", n.name, n.kind);
         }
         if report.impacted_nodes.len() > 15 {
-            println!("    ... and {} more affected nodes", report.impacted_nodes.len() - 15);
+            println!(
+                "    ... and {} more affected nodes",
+                report.impacted_nodes.len() - 15
+            );
         }
 
-        let risk = if report.total_impacted > 50 { "CRITICAL" }
-            else if report.total_impacted > 20 { "HIGH" }
-            else if report.total_impacted > 5 { "MEDIUM" }
-            else { "LOW" };
+        let risk = if report.total_impacted > 50 {
+            "CRITICAL"
+        } else if report.total_impacted > 20 {
+            "HIGH"
+        } else if report.total_impacted > 5 {
+            "MEDIUM"
+        } else {
+            "LOW"
+        };
         println!();
         println!("  Risk level: {}", risk);
     }
@@ -3428,7 +3756,10 @@ fn cmd_doctor() -> anyhow::Result<()> {
         println!("    \u{2713} size: {}", fmt_bytes(size));
     } else {
         println!("  Data directory");
-        println!("    \u{26A0} {} does not exist (will be created on first analyze)", cgx_dir.display());
+        println!(
+            "    \u{26A0} {} does not exist (will be created on first analyze)",
+            cgx_dir.display()
+        );
         warnings += 1;
     }
     println!();
@@ -3467,7 +3798,11 @@ fn cmd_doctor() -> anyhow::Result<()> {
 
     // 4. External tools
     println!("  External tools");
-    let tools = vec![("git", vec!["--version"]), ("node", vec!["--version"]), ("npm", vec!["--version"])];
+    let tools = vec![
+        ("git", vec!["--version"]),
+        ("node", vec!["--version"]),
+        ("npm", vec!["--version"]),
+    ];
     for (name, args) in tools {
         match Command::new(name).args(&args).output() {
             Ok(out) if out.status.success() => {
@@ -3479,7 +3814,10 @@ fn cmd_doctor() -> anyhow::Result<()> {
                     println!("    \u{2717} {}  required for git history analysis", name);
                     issues += 1;
                 } else {
-                    println!("    \u{26A0} {}  needed for web UI builds and publish", name);
+                    println!(
+                        "    \u{26A0} {}  needed for web UI builds and publish",
+                        name
+                    );
                     warnings += 1;
                 }
             }
@@ -3510,7 +3848,10 @@ fn cmd_doctor() -> anyhow::Result<()> {
             if registered {
                 println!("    \u{2713} {}  cgx registered", name);
             } else {
-                println!("    \u{26A0} {}  detected but cgx not registered (run `cgx setup`)", name);
+                println!(
+                    "    \u{26A0} {}  detected but cgx not registered (run `cgx setup`)",
+                    name
+                );
                 warnings += 1;
             }
         }
@@ -3581,10 +3922,7 @@ fn cmd_doctor() -> anyhow::Result<()> {
     if issues == 0 && warnings == 0 {
         println!("  \u{2713} All checks passed. cgx is healthy.");
     } else {
-        println!(
-            "  {} issue(s), {} warning(s) found.",
-            issues, warnings
-        );
+        println!("  {} issue(s), {} warning(s) found.", issues, warnings);
         if issues > 0 {
             println!("  Run `cgx setup` to fix editor integrations.");
             println!("  Run `cgx analyze` to index the current repo and generate skill files.");
@@ -3597,7 +3935,10 @@ fn cmd_doctor() -> anyhow::Result<()> {
 
 fn dir_size(path: &Path) -> anyhow::Result<u64> {
     let mut total = 0u64;
-    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             total += entry.metadata().map(|m| m.len()).unwrap_or(0);
         }
@@ -3624,12 +3965,16 @@ fn fmt_bytes(bytes: u64) -> String {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn cmd_clean(repo_path: &Path) -> anyhow::Result<()> {
-    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
     let mut reg = cgx_engine::Registry::load()?;
 
-    if let Some(pos) = reg.repos.iter().position(|r| {
-        r.path.canonicalize().ok().as_ref() == Some(&canonical)
-    }) {
+    if let Some(pos) = reg
+        .repos
+        .iter()
+        .position(|r| r.path.canonicalize().ok().as_ref() == Some(&canonical))
+    {
         let entry = reg.repos.remove(pos);
         if entry.db_path.exists() {
             std::fs::remove_file(&entry.db_path)?;
@@ -3638,7 +3983,10 @@ fn cmd_clean(repo_path: &Path) -> anyhow::Result<()> {
         reg.save()?;
         println!("  \u{2713} removed registry entry for: {}", entry.name);
     } else {
-        println!("  \u{26A0} no indexed repo found at: {}", canonical.display());
+        println!(
+            "  \u{26A0} no indexed repo found at: {}",
+            canonical.display()
+        );
     }
 
     // Optionally remove skill files if they exist in the repo root
@@ -3687,12 +4035,14 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
 
     // Try to detect installation method
     let exe = std::env::current_exe().ok();
-    let is_cargo = exe.as_ref().map(|p| {
-        p.to_string_lossy().contains(".cargo") || p.to_string_lossy().contains("cargo")
-    }).unwrap_or(false);
-    let is_homebrew = exe.as_ref().map(|p| {
-        p.to_string_lossy().contains("Cellar") || p.to_string_lossy().contains("homebrew")
-    }).unwrap_or(false);
+    let is_cargo = exe
+        .as_ref()
+        .map(|p| p.to_string_lossy().contains(".cargo") || p.to_string_lossy().contains("cargo"))
+        .unwrap_or(false);
+    let is_homebrew = exe
+        .as_ref()
+        .map(|p| p.to_string_lossy().contains("Cellar") || p.to_string_lossy().contains("homebrew"))
+        .unwrap_or(false);
 
     if auto {
         if is_cargo {
@@ -3707,9 +4057,7 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
             }
         } else if is_homebrew {
             println!("  Detected Homebrew installation. Running: brew upgrade cgx");
-            let status = Command::new("brew")
-                .args(["upgrade", "cgx"])
-                .status()?;
+            let status = Command::new("brew").args(["upgrade", "cgx"]).status()?;
             if status.success() {
                 println!("  \u{2713} update complete");
             } else {

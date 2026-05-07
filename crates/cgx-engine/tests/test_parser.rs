@@ -35,15 +35,15 @@ fn test_ts_parser_extracts_symbols() {
     ];
 
     for name in &required {
-        assert!(
-            all_names.contains(*name),
-            "missing expected node: {}",
-            name
-        );
+        assert!(all_names.contains(*name), "missing expected node: {}", name);
     }
 
     let total_nodes: usize = results.iter().map(|r| r.nodes.len()).sum();
-    assert!(total_nodes >= 12, "expected >= 12 nodes, got {}", total_nodes);
+    assert!(
+        total_nodes >= 12,
+        "expected >= 12 nodes, got {}",
+        total_nodes
+    );
 
     let _total_edges: usize = results.iter().map(|r| r.edges.len()).sum();
     let import_edges: usize = results
@@ -87,15 +87,15 @@ fn test_py_parser_extracts_symbols() {
     ];
 
     for name in &required {
-        assert!(
-            all_names.contains(*name),
-            "missing expected node: {}",
-            name
-        );
+        assert!(all_names.contains(*name), "missing expected node: {}", name);
     }
 
     let total_nodes: usize = results.iter().map(|r| r.nodes.len()).sum();
-    assert!(total_nodes >= 10, "expected >= 10 nodes, got {}", total_nodes);
+    assert!(
+        total_nodes >= 10,
+        "expected >= 10 nodes, got {}",
+        total_nodes
+    );
 }
 
 #[test]
@@ -123,11 +123,7 @@ fn test_rust_parser_extracts_symbols() {
     ];
 
     for name in &required {
-        assert!(
-            all_names.contains(*name),
-            "missing expected node: {}",
-            name
-        );
+        assert!(all_names.contains(*name), "missing expected node: {}", name);
     }
 }
 
@@ -154,8 +150,5 @@ fn test_import_edges_present() {
         .filter(|e| e.kind == cgx_engine::EdgeKind::Imports)
         .collect();
 
-    assert!(
-        !import_edges.is_empty(),
-        "should have import edges"
-    );
+    assert!(!import_edges.is_empty(), "should have import edges");
 }

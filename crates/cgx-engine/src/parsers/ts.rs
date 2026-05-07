@@ -1,17 +1,13 @@
-use tree_sitter::{Parser, Query, QueryCursor, Node};
+use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
 use crate::walker::SourceFile;
 
-pub struct TypeScriptParser {
-    language: tree_sitter::Language,
-}
+pub struct TypeScriptParser;
 
 impl TypeScriptParser {
     pub fn new() -> Self {
-        Self {
-            language: tree_sitter_typescript::language_typescript(),
-        }
+        Self
     }
 }
 
@@ -21,18 +17,30 @@ impl Default for TypeScriptParser {
     }
 }
 
+fn is_jsx_extension(path: &str) -> bool {
+    path.ends_with(".tsx") || path.ends_with(".jsx")
+}
+
 impl LanguageParser for TypeScriptParser {
     fn extensions(&self) -> &[&str] {
         &["ts", "tsx", "js", "jsx", "mjs", "cjs"]
     }
 
     fn extract(&self, file: &SourceFile) -> anyhow::Result<ParseResult> {
-        let mut parser = Parser::new();
-        parser.set_language(&self.language)?;
+        // TSX/JSX files must use the TSX grammar; TypeScript grammar rejects JSX syntax
+        // and produces error nodes with wrong line positions for every JSX element.
+        let language = if is_jsx_extension(&file.relative_path) {
+            tree_sitter_typescript::language_tsx()
+        } else {
+            tree_sitter_typescript::language_typescript()
+        };
 
-        let tree = parser.parse(&file.content, None).ok_or_else(|| {
-            anyhow::anyhow!("failed to parse {}", file.relative_path)
-        })?;
+        let mut parser = Parser::new();
+        parser.set_language(&language)?;
+
+        let tree = parser
+            .parse(&file.content, None)
+            .ok_or_else(|| anyhow::anyhow!("failed to parse {}", file.relative_path))?;
 
         let source_bytes = file.content.as_bytes();
         let root = tree.root_node();
@@ -42,9 +50,10 @@ impl LanguageParser for TypeScriptParser {
         let fp = file_node_id(&file.relative_path);
 
         // Parse function declarations
-        if let Ok(query) =
-            Query::new(&self.language, "(function_declaration name: (identifier) @name) @fn")
-        {
+        if let Ok(query) = Query::new(
+            &language,
+            "(function_declaration name: (identifier) @name) @fn",
+        ) {
             extract_nodes(
                 &mut nodes,
                 &mut edges,
@@ -60,7 +69,7 @@ impl LanguageParser for TypeScriptParser {
 
         // Parse arrow functions / variable declarations with arrow
         if let Ok(query) = Query::new(
-            &self.language,
+            &language,
             "(variable_declarator name: (identifier) @name value: (arrow_function) @fn)",
         ) {
             extract_nodes(
@@ -78,7 +87,7 @@ impl LanguageParser for TypeScriptParser {
 
         // Parse variable declarations with function expressions
         if let Ok(query) = Query::new(
-            &self.language,
+            &language,
             "(variable_declarator name: (identifier) @name value: (function_expression) @fn)",
         ) {
             extract_nodes(
@@ -95,9 +104,10 @@ impl LanguageParser for TypeScriptParser {
         }
 
         // Parse class declarations
-        if let Ok(query) =
-            Query::new(&self.language, "(class_declaration name: (type_identifier) @name) @cls")
-        {
+        if let Ok(query) = Query::new(
+            &language,
+            "(class_declaration name: (type_identifier) @name) @cls",
+        ) {
             extract_nodes(
                 &mut nodes,
                 &mut edges,
@@ -113,7 +123,7 @@ impl LanguageParser for TypeScriptParser {
 
         // Parse method definitions
         if let Ok(query) = Query::new(
-            &self.language,
+            &language,
             "(method_definition name: (property_identifier) @name) @m",
         ) {
             extract_nodes(
@@ -134,17 +144,35 @@ impl LanguageParser for TypeScriptParser {
 
         // Parse exports
         if let Ok(query) = Query::new(
-            &self.language,
+            &language,
             "(export_statement (function_declaration name: (identifier) @name) @expr)",
         ) {
-            process_exports(&mut nodes, &mut edges, file, &query, root, source_bytes, &fp, "fn");
+            process_exports(
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                &fp,
+                "fn",
+            );
         }
 
         if let Ok(query) = Query::new(
-            &self.language,
+            &language,
             "(export_statement (class_declaration name: (type_identifier) @name) @expr)",
         ) {
-            process_exports(&mut nodes, &mut edges, file, &query, root, source_bytes, &fp, "cls");
+            process_exports(
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                &fp,
+                "cls",
+            );
         }
 
         // Extract CALLS edges by walking the AST with function context tracking
@@ -194,14 +222,10 @@ fn extract_nodes(
             .map(|c| c.node.end_position())
             .unwrap_or_else(|| name_capture.node.end_position());
 
-        let Some(_fn_capture) = m
-            .captures
-            .iter()
-            .find(|c| {
-                let cap_name = &query.capture_names()[c.index as usize];
-                *cap_name == "fn" || *cap_name == "cls" || *cap_name == "m"
-            })
-        else {
+        let Some(_fn_capture) = m.captures.iter().find(|c| {
+            let cap_name = &query.capture_names()[c.index as usize];
+            *cap_name == "fn" || *cap_name == "cls" || *cap_name == "m"
+        }) else {
             continue;
         };
 
@@ -219,9 +243,12 @@ fn extract_nodes(
 
         edges.push(EdgeDef {
             src: file_id.to_string(),
-            dst: format!("{}:{}:{}", prefix, file.relative_path, unquote_str(
-                &source_bytes[name_capture.node.byte_range()]
-            )),
+            dst: format!(
+                "{}:{}:{}",
+                prefix,
+                file.relative_path,
+                unquote_str(&source_bytes[name_capture.node.byte_range()])
+            ),
             kind: EdgeKind::Exports,
             ..Default::default()
         });
@@ -286,7 +313,9 @@ fn traverse_imports(
 ) {
     if node.kind() == "import_statement" {
         for j in 0..node.child_count() {
-            let Some(import_child) = node.child(j) else { continue };
+            let Some(import_child) = node.child(j) else {
+                continue;
+            };
             if import_child.kind() == "string" {
                 let import_path = unquote_str(&source_bytes[import_child.byte_range()]);
                 if import_path.starts_with('.') {
@@ -313,7 +342,8 @@ fn traverse_imports(
                         if arg.kind() == "string" {
                             let import_path = unquote_str(&source_bytes[arg.byte_range()]);
                             if import_path.starts_with('.') {
-                                let resolved = resolve_import_path(&file.relative_path, &import_path);
+                                let resolved =
+                                    resolve_import_path(&file.relative_path, &import_path);
                                 if !resolved.is_empty() {
                                     edges.push(EdgeDef {
                                         src: file_id.to_string(),
@@ -372,9 +402,14 @@ fn extract_calls(edges: &mut Vec<EdgeDef>, root: Node, source: &[u8], file: &Sou
 }
 
 fn is_fn_node(kind: &str) -> bool {
-    matches!(kind,
-        "function_declaration" | "function" | "arrow_function" |
-        "method_definition" | "generator_function_declaration" | "generator_function"
+    matches!(
+        kind,
+        "function_declaration"
+            | "function"
+            | "arrow_function"
+            | "method_definition"
+            | "generator_function_declaration"
+            | "generator_function"
     )
 }
 
@@ -437,6 +472,44 @@ fn walk_for_calls(
                     dst: callee_name,
                     kind: EdgeKind::Calls,
                     confidence: 0.7,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    // JSX component usage: <ComponentName ... /> and <ComponentName ...>
+    // Treat JSX elements as calls from the enclosing function to the component.
+    if kind == "jsx_opening_element" || kind == "jsx_self_closing_element" {
+        if let Some(caller_id) = fn_stack.last().filter(|s| !s.is_empty()) {
+            let tag_name = node
+                .child_by_field_name("name")
+                .map(|n| n.utf8_text(source).unwrap_or("").to_string())
+                .unwrap_or_default();
+
+            // Only emit edges for PascalCase or camelCase user-defined components.
+            // Lowercase tags like <div>, <span> are HTML intrinsics — skip them.
+            let is_component = tag_name
+                .chars()
+                .next()
+                .map(|c| {
+                    c.is_uppercase()
+                        || (c.is_lowercase() && tag_name.len() > 3 && tag_name.contains('.'))
+                })
+                .unwrap_or(false);
+
+            if is_component {
+                // Strip member access for <Namespace.Component /> — use only the last segment
+                let callee = tag_name
+                    .split('.')
+                    .next_back()
+                    .unwrap_or(&tag_name)
+                    .to_string();
+                edges.push(EdgeDef {
+                    src: caller_id.clone(),
+                    dst: callee,
+                    kind: EdgeKind::Calls,
+                    confidence: 0.6,
                     ..Default::default()
                 });
             }

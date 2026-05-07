@@ -156,10 +156,7 @@ impl ParserRegistry {
             Language::Rust,
             Box::new(super::parsers::rust::RustParser::new()),
         );
-        parsers.insert(
-            Language::Go,
-            Box::new(super::parsers::go::GoParser::new()),
-        );
+        parsers.insert(Language::Go, Box::new(super::parsers::go::GoParser::new()));
         parsers.insert(
             Language::Java,
             Box::new(super::parsers::java::JavaParser::new()),
@@ -188,10 +185,12 @@ impl ParserRegistry {
         use rayon::prelude::*;
         files
             .par_iter()
-            .map(|file| self.parse(file).unwrap_or_else(|e| {
-                tracing::warn!("Parse error in {}: {}", file.relative_path, e);
-                ParseResult::new()
-            }))
+            .map(|file| {
+                self.parse(file).unwrap_or_else(|e| {
+                    tracing::warn!("Parse error in {}: {}", file.relative_path, e);
+                    ParseResult::new()
+                })
+            })
             .collect()
     }
 }

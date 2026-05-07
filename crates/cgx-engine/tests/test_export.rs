@@ -1,17 +1,16 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use cgx_engine::{export_dot, export_graphml, export_json, export_mermaid, export_svg, Edge, GraphDb, Node};
+use cgx_engine::{
+    export_dot, export_graphml, export_json, export_mermaid, export_svg, Edge, GraphDb, Node,
+};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn temp_dir() -> PathBuf {
     let count = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "cgx-export-test-{}-{}",
-        std::process::id(),
-        count
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("cgx-export-test-{}-{}", std::process::id(), count));
     std::fs::create_dir_all(&dir).expect("failed to create test dir");
     std::fs::write(dir.join("dummy.txt"), "test").expect("failed to write dummy file");
     dir
@@ -147,18 +146,8 @@ fn test_export_json_valid_structure() {
     let meta = &data["meta"];
     assert!(meta.get("repo_id").is_some());
     assert!(meta.get("indexed_at").is_some());
-    assert!(
-        meta.get("node_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
-            >= 5
-    );
-    assert!(
-        meta.get("edge_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
-            >= 4
-    );
+    assert!(meta.get("node_count").and_then(|v| v.as_u64()).unwrap_or(0) >= 5);
+    assert!(meta.get("edge_count").and_then(|v| v.as_u64()).unwrap_or(0) >= 4);
 
     let nodes = data["nodes"].as_array().expect("nodes should be an array");
     assert!(nodes.len() >= 5);
@@ -201,11 +190,13 @@ fn test_export_json_round_trip_edges() {
         let dst = edge["dst"].as_str().expect("edge dst should be a string");
         assert!(
             node_ids.contains(src),
-            "edge source '{}' not found in nodes", src
+            "edge source '{}' not found in nodes",
+            src
         );
         assert!(
             node_ids.contains(dst),
-            "edge destination '{}' not found in nodes", dst
+            "edge destination '{}' not found in nodes",
+            dst
         );
     }
 
@@ -236,11 +227,12 @@ fn test_export_mermaid_respects_max_nodes() {
     seed_graph(&db);
 
     let mermaid = export_mermaid(&db, 2).expect("mermaid export failed");
-    let node_lines: Vec<&str> = mermaid
-        .lines()
-        .filter(|l| l.contains("[\""))
-        .collect();
-    assert!(node_lines.len() <= 2, "should cap at 2 nodes, got {}", node_lines.len());
+    let node_lines: Vec<&str> = mermaid.lines().filter(|l| l.contains("[\"")).collect();
+    assert!(
+        node_lines.len() <= 2,
+        "should cap at 2 nodes, got {}",
+        node_lines.len()
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -251,7 +243,10 @@ fn test_export_mermaid_empty_graph() {
     let db = GraphDb::open(&dir).expect("failed to open db");
 
     let mermaid = export_mermaid(&db, 100).expect("mermaid export failed");
-    assert!(mermaid.contains("No data"), "empty graph should show 'No data'");
+    assert!(
+        mermaid.contains("No data"),
+        "empty graph should show 'No data'"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -263,7 +258,10 @@ fn test_export_dot_valid_syntax() {
     seed_graph(&db);
 
     let dot = export_dot(&db).expect("dot export failed");
-    assert!(dot.starts_with("digraph"), "dot should start with 'digraph'");
+    assert!(
+        dot.starts_with("digraph"),
+        "dot should start with 'digraph'"
+    );
     assert!(dot.contains("->"), "dot should contain arrows");
     assert!(dot.ends_with("}\n"), "dot should end with closing brace");
 
@@ -276,7 +274,10 @@ fn test_export_dot_empty_graph() {
     let db = GraphDb::open(&dir).expect("failed to open db");
 
     let dot = export_dot(&db).expect("dot export failed");
-    assert!(dot.contains("No data"), "empty graph should indicate no data");
+    assert!(
+        dot.contains("No data"),
+        "empty graph should indicate no data"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -300,7 +301,10 @@ fn test_export_svg_empty_graph() {
     let db = GraphDb::open(&dir).expect("failed to open db");
 
     let svg = export_svg(&db).expect("svg export failed");
-    assert!(svg.contains("No data") || svg.contains("0 nodes"), "should show empty state");
+    assert!(
+        svg.contains("No data") || svg.contains("0 nodes"),
+        "should show empty state"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -316,7 +320,10 @@ fn test_export_graphml_valid_structure() {
         graphml.starts_with("<?xml"),
         "GraphML should start with XML declaration"
     );
-    assert!(graphml.contains("<graphml"), "should contain graphml element");
+    assert!(
+        graphml.contains("<graphml"),
+        "should contain graphml element"
+    );
     assert!(graphml.contains("<node"), "should contain nodes");
     assert!(graphml.contains("<edge"), "should contain edges");
     assert!(graphml.contains("</graphml>"), "should close graphml");

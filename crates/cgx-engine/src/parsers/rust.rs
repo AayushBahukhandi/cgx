@@ -30,9 +30,9 @@ impl LanguageParser for RustParser {
         let mut parser = Parser::new();
         parser.set_language(&self.language)?;
 
-        let tree = parser.parse(&file.content, None).ok_or_else(|| {
-            anyhow::anyhow!("failed to parse {}", file.relative_path)
-        })?;
+        let tree = parser
+            .parse(&file.content, None)
+            .ok_or_else(|| anyhow::anyhow!("failed to parse {}", file.relative_path))?;
 
         let source_bytes = file.content.as_bytes();
         let root = tree.root_node();
@@ -42,7 +42,10 @@ impl LanguageParser for RustParser {
         let fp = format!("file:{}", file.relative_path);
 
         // Function definitions
-        if let Ok(query) = Query::new(&self.language, "(function_item name: (identifier) @name) @fn") {
+        if let Ok(query) = Query::new(
+            &self.language,
+            "(function_item name: (identifier) @name) @fn",
+        ) {
             let mut cursor = QueryCursor::new();
             for m in cursor.matches(&query, root, source_bytes) {
                 let Some(name_capture) = m
@@ -54,7 +57,9 @@ impl LanguageParser for RustParser {
                 };
                 let name = node_text(name_capture.node, source_bytes);
                 let start = name_capture.node.start_position();
-                let body_end = m.captures.iter()
+                let body_end = m
+                    .captures
+                    .iter()
                     .find(|c| query.capture_names()[c.index as usize] == "fn")
                     .map(|c| c.node.end_position())
                     .unwrap_or_else(|| name_capture.node.end_position());
@@ -80,7 +85,10 @@ impl LanguageParser for RustParser {
         }
 
         // Struct definitions
-        if let Ok(query) = Query::new(&self.language, "(struct_item name: (type_identifier) @name) @s") {
+        if let Ok(query) = Query::new(
+            &self.language,
+            "(struct_item name: (type_identifier) @name) @s",
+        ) {
             extract_type_nodes(
                 &mut nodes,
                 &mut edges,
@@ -95,7 +103,10 @@ impl LanguageParser for RustParser {
         }
 
         // Enum definitions
-        if let Ok(query) = Query::new(&self.language, "(enum_item name: (type_identifier) @name) @e") {
+        if let Ok(query) = Query::new(
+            &self.language,
+            "(enum_item name: (type_identifier) @name) @e",
+        ) {
             extract_type_nodes(
                 &mut nodes,
                 &mut edges,
@@ -110,7 +121,10 @@ impl LanguageParser for RustParser {
         }
 
         // Trait definitions
-        if let Ok(query) = Query::new(&self.language, "(trait_item name: (type_identifier) @name) @t") {
+        if let Ok(query) = Query::new(
+            &self.language,
+            "(trait_item name: (type_identifier) @name) @t",
+        ) {
             extract_type_nodes(
                 &mut nodes,
                 &mut edges,
@@ -180,7 +194,10 @@ impl LanguageParser for RustParser {
         }
 
         // Simpler use declarations (use foo::Bar)
-        if let Ok(query) = Query::new(&self.language, "(use_declaration argument: (identifier) @name)") {
+        if let Ok(query) = Query::new(
+            &self.language,
+            "(use_declaration argument: (identifier) @name)",
+        ) {
             let mut cursor = QueryCursor::new();
             for m in cursor.matches(&query, root, source_bytes) {
                 if let Some(name_cap) = m
@@ -228,7 +245,9 @@ fn extract_type_nodes(
         let name = node_text(name_capture.node, source_bytes);
         let start = name_capture.node.start_position();
         // Use the body node for end position; fall back to name node if no body capture
-        let body_end = m.captures.iter()
+        let body_end = m
+            .captures
+            .iter()
             .find(|c| query.capture_names()[c.index as usize] != "name")
             .map(|c| c.node.end_position())
             .unwrap_or_else(|| name_capture.node.end_position());

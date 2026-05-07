@@ -80,17 +80,8 @@ pub fn detect_communities(nodes: &[Node], edges: &[Edge]) -> HashMap<String, i64
                 let ki_in_neighbor = community_edge_weight(node, neighbor_comm, &adj, &part);
                 let sigma_tot_neighbor = total_community_weight(neighbor_comm, &part, &k);
 
-                let delta = modularity_delta(
-                    ki_in_neighbor,
-                    sigma_tot_neighbor,
-                    ki,
-                    m2,
-                ) - modularity_delta(
-                    ki_in_current,
-                    sigma_tot_current,
-                    ki,
-                    m2,
-                );
+                let delta = modularity_delta(ki_in_neighbor, sigma_tot_neighbor, ki, m2)
+                    - modularity_delta(ki_in_current, sigma_tot_current, ki, m2);
 
                 if delta > best_delta {
                     best_delta = delta;

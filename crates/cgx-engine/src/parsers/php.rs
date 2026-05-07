@@ -1,4 +1,4 @@
-use tree_sitter::{Parser, Query, QueryCursor, Node};
+use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
 use crate::walker::SourceFile;
@@ -30,9 +30,9 @@ impl LanguageParser for PhpParser {
         let mut parser = Parser::new();
         parser.set_language(&self.language)?;
 
-        let tree = parser.parse(&file.content, None).ok_or_else(|| {
-            anyhow::anyhow!("failed to parse {}", file.relative_path)
-        })?;
+        let tree = parser
+            .parse(&file.content, None)
+            .ok_or_else(|| anyhow::anyhow!("failed to parse {}", file.relative_path))?;
 
         let source_bytes = file.content.as_bytes();
         let root = tree.root_node();
@@ -47,8 +47,15 @@ impl LanguageParser for PhpParser {
             "(function_definition name: (name) @name) @fn",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Function, "fn", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Function,
+                "fn",
+                &fp,
             );
         }
 
@@ -58,8 +65,15 @@ impl LanguageParser for PhpParser {
             "(class_declaration name: (name) @name) @cls",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Class, "cls", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Class,
+                "cls",
+                &fp,
             );
         }
 
@@ -69,8 +83,15 @@ impl LanguageParser for PhpParser {
             "(interface_declaration name: (name) @name) @cls",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Class, "cls", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Class,
+                "cls",
+                &fp,
             );
         }
 
@@ -80,8 +101,15 @@ impl LanguageParser for PhpParser {
             "(method_declaration name: (name) @name) @fn",
         ) {
             extract_nodes(
-                &mut nodes, &mut edges, file, &query, root, source_bytes,
-                NodeKind::Function, "fn", &fp,
+                &mut nodes,
+                &mut edges,
+                file,
+                &query,
+                root,
+                source_bytes,
+                NodeKind::Function,
+                "fn",
+                &fp,
             );
         }
 
@@ -239,7 +267,10 @@ fn extract_calls(edges: &mut Vec<EdgeDef>, root: Node, source: &[u8], file: &Sou
 }
 
 fn is_fn_node(kind: &str) -> bool {
-    matches!(kind, "function_definition" | "method_declaration" | "anonymous_function_creation_expression")
+    matches!(
+        kind,
+        "function_definition" | "method_declaration" | "anonymous_function_creation_expression"
+    )
 }
 
 fn fn_name_from_node(node: Node, source: &[u8], file: &SourceFile) -> Option<String> {

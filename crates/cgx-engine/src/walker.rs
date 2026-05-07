@@ -33,7 +33,13 @@ pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
     walker.hidden(true);
     // Explicitly add overrides for common non-source directories
     let mut override_builder = ignore::overrides::OverrideBuilder::new(&canonical);
-    for pattern in &["!node_modules/", "!target/", "!dist/", "!__pycache__/", "!.git/"] {
+    for pattern in &[
+        "!node_modules/",
+        "!target/",
+        "!dist/",
+        "!__pycache__/",
+        "!.git/",
+    ] {
         let _ = override_builder.add(pattern);
     }
     let overrides = override_builder.build()?;

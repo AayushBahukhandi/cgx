@@ -71,14 +71,8 @@ impl App {
         let mut edge_index_src: HashMap<String, Vec<usize>> = HashMap::new();
         let mut edge_index_dst: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, e) in edges.iter().enumerate() {
-            edge_index_src
-                .entry(e.src.clone())
-                .or_default()
-                .push(i);
-            edge_index_dst
-                .entry(e.dst.clone())
-                .or_default()
-                .push(i);
+            edge_index_src.entry(e.src.clone()).or_default().push(i);
+            edge_index_dst.entry(e.dst.clone()).or_default().push(i);
         }
 
         let visible_node_indices: Vec<usize> = (0..nodes.len())
@@ -87,15 +81,10 @@ impl App {
 
         let selected = visible_node_indices.first().copied();
 
-        let visible_nodes: Vec<&Node> = visible_node_indices
-            .iter()
-            .map(|&i| &nodes[i])
-            .collect();
+        let visible_nodes: Vec<&Node> = visible_node_indices.iter().map(|&i| &nodes[i]).collect();
         let visible_edges: Vec<&Edge> = edges
             .iter()
-            .filter(|e| {
-                node_index.contains_key(&e.src) && node_index.contains_key(&e.dst)
-            })
+            .filter(|e| node_index.contains_key(&e.src) && node_index.contains_key(&e.dst))
             .collect();
 
         let (sim, positions) = if !visible_nodes.is_empty() {
@@ -188,9 +177,9 @@ impl App {
         if self.visible_node_indices.is_empty() {
             return;
         }
-        let current = self.selected.and_then(|s| {
-            self.visible_node_indices.iter().position(|&i| i == s)
-        });
+        let current = self
+            .selected
+            .and_then(|s| self.visible_node_indices.iter().position(|&i| i == s));
         let next = match current {
             Some(pos) => (pos + 1) % self.visible_node_indices.len(),
             None => 0,
@@ -202,9 +191,9 @@ impl App {
         if self.visible_node_indices.is_empty() {
             return;
         }
-        let current = self.selected.and_then(|s| {
-            self.visible_node_indices.iter().position(|&i| i == s)
-        });
+        let current = self
+            .selected
+            .and_then(|s| self.visible_node_indices.iter().position(|&i| i == s));
         let prev = match current {
             Some(pos) => {
                 if pos == 0 {
@@ -233,9 +222,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, n)| {
-                    let community_ok = self
-                        .filter_community
-                        .is_none_or(|c| n.community == c);
+                    let community_ok = self.filter_community.is_none_or(|c| n.community == c);
                     community_ok
                         && (n.name.to_lowercase().contains(&query)
                             || n.path.to_lowercase().contains(&query)
@@ -325,8 +312,7 @@ impl App {
             .edges
             .iter()
             .filter(|e| {
-                self.node_index.contains_key(&e.src)
-                    && self.node_index.contains_key(&e.dst)
+                self.node_index.contains_key(&e.src) && self.node_index.contains_key(&e.dst)
             })
             .collect();
 
