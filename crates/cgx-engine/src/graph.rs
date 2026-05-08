@@ -58,6 +58,17 @@ pub struct RepoStats {
 pub type CommunityRow = (i64, String, i64, Vec<String>);
 type CommunityGroup = (Vec<(String, i64, String)>, i64); // (kind, in_degree, name)
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagRow {
+    pub id: String,
+    pub file_path: String,
+    pub line: u32,
+    pub tag_type: String,
+    pub text: String,
+    /// "code", "jsx", or "jsx_commented_code"
+    pub comment_type: String,
+}
+
 impl Node {
     pub fn from_def(d: &NodeDef, language: &str) -> Self {
         Self {
@@ -149,12 +160,22 @@ impl GraphDb {
                 hash       VARCHAR NOT NULL,
                 indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS tags (
+                id           VARCHAR PRIMARY KEY,
+                file_path    VARCHAR NOT NULL,
+                line         INTEGER NOT NULL,
+                tag_type     VARCHAR NOT NULL,
+                text         VARCHAR NOT NULL,
+                comment_type VARCHAR NOT NULL DEFAULT 'code'
+            );
             CREATE INDEX IF NOT EXISTS idx_nodes_kind      ON nodes(kind);
             CREATE INDEX IF NOT EXISTS idx_nodes_path      ON nodes(path);
             CREATE INDEX IF NOT EXISTS idx_nodes_community ON nodes(community);
             CREATE INDEX IF NOT EXISTS idx_edges_src       ON edges(src);
             CREATE INDEX IF NOT EXISTS idx_edges_dst       ON edges(dst);
-            CREATE INDEX IF NOT EXISTS idx_edges_kind      ON edges(kind);",
+            CREATE INDEX IF NOT EXISTS idx_edges_kind      ON edges(kind);
+            CREATE INDEX IF NOT EXISTS idx_tags_file       ON tags(file_path);
+            CREATE INDEX IF NOT EXISTS idx_tags_type       ON tags(tag_type);",
         )?;
 
         Ok(Self {
@@ -214,6 +235,107 @@ impl GraphDb {
             count += 1;
         }
         Ok(count)
+    }
+
+    pub fn upsert_tags(&self, tags: &[TagRow]) -> anyhow::Result<usize> {
+        if tags.is_empty() {
+            return Ok(0);
+        }
+        let mut count = 0;
+        let mut stmt = self.conn.prepare(
+            "INSERT OR REPLACE INTO tags (id, file_path, line, tag_type, text, comment_type)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )?;
+        for tag in tags {
+            stmt.execute(params![
+                tag.id,
+                tag.file_path,
+                tag.line,
+                tag.tag_type,
+                tag.text,
+                tag.comment_type,
+            ])?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    pub fn get_tags(
+        &self,
+        tag_type_filter: Option<&str>,
+        comment_type_filter: Option<&str>,
+    ) -> anyhow::Result<Vec<TagRow>> {
+        let sql = match (tag_type_filter, comment_type_filter) {
+            (Some(_), Some(_)) => {
+                "SELECT id, file_path, line, tag_type, text, comment_type FROM tags \
+                 WHERE tag_type = ? AND comment_type = ? ORDER BY file_path, line"
+            }
+            (Some(_), None) => {
+                "SELECT id, file_path, line, tag_type, text, comment_type FROM tags \
+                 WHERE tag_type = ? ORDER BY file_path, line"
+            }
+            (None, Some(_)) => {
+                "SELECT id, file_path, line, tag_type, text, comment_type FROM tags \
+                 WHERE comment_type = ? ORDER BY file_path, line"
+            }
+            (None, None) => {
+                "SELECT id, file_path, line, tag_type, text, comment_type FROM tags \
+                 ORDER BY file_path, line"
+            }
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let map_row = |row: &duckdb::Row| {
+            Ok(TagRow {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+                line: row.get::<_, u32>(2)?,
+                tag_type: row.get(3)?,
+                text: row.get(4)?,
+                comment_type: row.get(5)?,
+            })
+        };
+
+        let rows = match (tag_type_filter, comment_type_filter) {
+            (Some(t), Some(c)) => stmt.query_map(params![t, c], map_row)?,
+            (Some(t), None) => stmt.query_map(params![t], map_row)?,
+            (None, Some(c)) => stmt.query_map(params![c], map_row)?,
+            (None, None) => stmt.query_map([], map_row)?,
+        };
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn clear_all_tags(&self) -> anyhow::Result<()> {
+        self.conn.execute_batch(
+            "DROP TABLE IF EXISTS tags;
+             CREATE TABLE IF NOT EXISTS tags (
+                 id           VARCHAR PRIMARY KEY,
+                 file_path    VARCHAR NOT NULL,
+                 line         INTEGER NOT NULL,
+                 tag_type     VARCHAR NOT NULL,
+                 text         VARCHAR NOT NULL,
+                 comment_type VARCHAR NOT NULL DEFAULT 'code'
+             );
+             CREATE INDEX IF NOT EXISTS idx_tags_file ON tags(file_path);
+             CREATE INDEX IF NOT EXISTS idx_tags_type ON tags(tag_type);",
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_tags_for_paths(&self, paths: &[String]) -> anyhow::Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut stmt = self.conn.prepare("DELETE FROM tags WHERE file_path = ?")?;
+        for path in paths {
+            stmt.execute(params![path])?;
+        }
+        Ok(())
     }
 
     pub fn get_node(&self, id: &str) -> anyhow::Result<Option<Node>> {

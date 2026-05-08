@@ -184,7 +184,11 @@ impl LanguageParser for PythonParser {
             }
         }
 
-        Ok(ParseResult { nodes, edges })
+        Ok(ParseResult {
+            nodes,
+            edges,
+            ..Default::default()
+        })
     }
 }
 

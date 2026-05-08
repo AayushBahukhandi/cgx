@@ -10,7 +10,7 @@ use std::time::Duration;
 use cgx_engine::{
     analyze_repo, export_dot, export_graphml, export_json, export_mermaid, export_svg, resolve,
     run_clustering, walk_repo, Edge, EdgeKind, GraphDb, Node, NodeKind, ParserRegistry, Registry,
-    RepoEntry,
+    RepoEntry, TagRow,
 };
 
 use tui::{App, AppMode, GraphWidget};
@@ -211,6 +211,24 @@ enum Commands {
         /// Path to the repository
         #[arg(long)]
         repo: Option<PathBuf>,
+    },
+    /// List annotation comments (TODO, FIXME, HACK, etc.) across the codebase
+    Todos {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// Filter by annotation type (TODO, FIXME, HACK, NOTE, BUG, OPTIMIZE, WARN, XXX)
+        #[arg(long)]
+        tag: Option<String>,
+
+        /// Filter by comment source: code, jsx, or jsx_commented_code
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Run diagnostic checks on your cgx installation
     Doctor {},
@@ -426,6 +444,15 @@ fn main() -> anyhow::Result<()> {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
             let since_days = parse_duration_days(&since)?;
             cmd_impact(&repo_path, since_days)
+        }
+        Commands::Todos {
+            repo,
+            tag,
+            kind,
+            json,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            cmd_todos(&repo_path, tag.as_deref(), kind.as_deref(), json)
         }
         Commands::Doctor {} => cmd_doctor(),
         Commands::Clean { path, all } => {
@@ -706,6 +733,24 @@ fn cmd_analyze(
     let _ = db.upsert_nodes(&db_nodes)?;
     let _ = db.upsert_edges(&db_edges)?;
 
+    // Store comment annotation tags (TODO/FIXME/HACK/etc.) extracted from all files
+    let tag_rows: Vec<TagRow> = results
+        .iter()
+        .zip(files.iter())
+        .flat_map(|(result, file)| {
+            result.comment_tags.iter().map(move |t| TagRow {
+                id: format!("tag:{}:{}:{}", file.relative_path, t.line, t.tag_type),
+                file_path: file.relative_path.clone(),
+                line: t.line,
+                tag_type: t.tag_type.clone(),
+                text: t.text.clone(),
+                comment_type: t.comment_kind.as_str().to_string(),
+            })
+        })
+        .collect();
+    db.clear_all_tags()?;
+    let tag_count = db.upsert_tags(&tag_rows)?;
+
     db.update_in_out_degrees()?;
 
     if !quiet {
@@ -725,6 +770,12 @@ fn cmd_analyze(
             "  \u{2713} Storing graph...            saved to {}",
             db.db_path.display()
         );
+        if tag_count > 0 {
+            println!(
+                "  \u{2713} Indexing annotations...     {:>4} TODO/FIXME/HACK tags",
+                tag_count
+            );
+        }
     }
 
     // Step 5: Git Intelligence
@@ -2074,6 +2125,16 @@ fn render_help_overlay(f: &mut ratatui::Frame, size: Rect, _app: &App) {
         Line::raw("  Scroll        Zoom in / out"),
         Line::raw("  Click         Select node or its label"),
         Line::raw(""),
+        Line::raw(""),
+        Line::styled(
+            "  Resources",
+            Style::default()
+                .fg(Color::Rgb(200, 200, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw("  Docs & issues: github.com/AayushBahukhandi/cgx"),
+        Line::raw("  Annotation tags: cgx todos"),
+        Line::raw(""),
         Line::styled(
             "  Esc / ?  close this help",
             Style::default().fg(Color::Rgb(80, 80, 90)),
@@ -3138,6 +3199,50 @@ fn cmd_query_dead_code(repo: Option<PathBuf>) -> anyhow::Result<()> {
             println!("    {}  {:<20}  {}", n.kind, n.name, n.path);
         }
     }
+    Ok(())
+}
+
+fn cmd_todos(
+    repo_path: &Path,
+    tag_filter: Option<&str>,
+    kind_filter: Option<&str>,
+    as_json: bool,
+) -> anyhow::Result<()> {
+    let db = GraphDb::open(&resolve_repo(Some(repo_path.to_path_buf())))?;
+
+    let tag_uc = tag_filter.map(|t| t.to_uppercase());
+    let tags = db.get_tags(tag_uc.as_deref(), kind_filter)?;
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&tags)?);
+        return Ok(());
+    }
+
+    if tags.is_empty() {
+        println!("  No annotation comments found. Run `cgx analyze` to index the codebase.");
+        return Ok(());
+    }
+
+    let type_width = tags.iter().map(|t| t.tag_type.len()).max().unwrap_or(5);
+
+    for t in &tags {
+        let kind_badge = match t.comment_type.as_str() {
+            "jsx" => "[jsx]",
+            "jsx_commented_code" => "[jsx-code]",
+            _ => "[code]",
+        };
+        println!(
+            "  {:<width$}  {}:{}  {}  {}",
+            t.tag_type,
+            t.file_path,
+            t.line,
+            kind_badge,
+            t.text.lines().next().unwrap_or("").trim(),
+            width = type_width,
+        );
+    }
+    println!();
+    println!("  {} annotation(s) found.", tags.len());
     Ok(())
 }
 

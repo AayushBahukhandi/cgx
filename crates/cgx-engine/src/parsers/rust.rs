@@ -217,7 +217,11 @@ impl LanguageParser for RustParser {
             }
         }
 
-        Ok(ParseResult { nodes, edges })
+        Ok(ParseResult {
+            nodes,
+            edges,
+            ..Default::default()
+        })
     }
 }
 

@@ -13,6 +13,34 @@ pub enum NodeKind {
     Author,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum CommentKind {
+    /// Regular JS/JSDoc comment above a function or at the top level
+    Standard,
+    /// `{/* ... */}` expression comment inside JSX return body
+    JsxExpression,
+    /// JSX expression comment whose inner text starts with `<` — commented-out JSX code
+    JsxCommentedCode,
+}
+
+impl CommentKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CommentKind::Standard => "code",
+            CommentKind::JsxExpression => "jsx",
+            CommentKind::JsxCommentedCode => "jsx_commented_code",
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommentTag {
+    pub tag_type: String,
+    pub text: String,
+    pub line: u32,
+    pub comment_kind: CommentKind,
+}
+
 impl NodeKind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -110,6 +138,8 @@ fn default_edge_weight() -> f64 {
 pub struct ParseResult {
     pub nodes: Vec<NodeDef>,
     pub edges: Vec<EdgeDef>,
+    #[serde(default)]
+    pub comment_tags: Vec<CommentTag>,
 }
 
 impl ParseResult {
@@ -117,6 +147,7 @@ impl ParseResult {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
+            comment_tags: Vec::new(),
         }
     }
 }

@@ -21,9 +21,10 @@ pub use diff::{
 };
 pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
 pub use git::{analyze_repo, GitAnalysis};
-pub use graph::{CommunityRow, Edge, GraphDb, Node, RepoStats};
+pub use graph::{CommunityRow, Edge, GraphDb, Node, RepoStats, TagRow};
 pub use parser::{
-    EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult, ParserRegistry,
+    CommentKind, CommentTag, EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult,
+    ParserRegistry,
 };
 pub use registry::{Registry, RepoEntry};
 pub use resolver::resolve;
@@ -328,7 +329,29 @@ pub fn analyze_repo_incremental(
     db.update_in_out_degrees()?;
     db.compute_coupling()?;
 
-    // 12. Store new file hashes
+    // 12. Update tags for changed/deleted files
+    let changed_paths_vec: Vec<String> = changed_paths.iter().cloned().collect();
+    db.delete_tags_for_paths(&changed_paths_vec)?;
+    let new_tag_rows: Vec<crate::graph::TagRow> = results
+        .iter()
+        .zip(changed_files.iter())
+        .flat_map(|(result, file)| {
+            result
+                .comment_tags
+                .iter()
+                .map(move |t| crate::graph::TagRow {
+                    id: format!("tag:{}:{}:{}", file.relative_path, t.line, t.tag_type),
+                    file_path: file.relative_path.clone(),
+                    line: t.line,
+                    tag_type: t.tag_type.clone(),
+                    text: t.text.clone(),
+                    comment_type: t.comment_kind.as_str().to_string(),
+                })
+        })
+        .collect();
+    db.upsert_tags(&new_tag_rows)?;
+
+    // 13. Store new file hashes
     for (path, hash) in &current_hashes {
         db.set_file_hash(path, hash)?;
     }

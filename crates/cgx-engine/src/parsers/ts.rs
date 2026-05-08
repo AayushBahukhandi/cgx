@@ -1,6 +1,8 @@
 use tree_sitter::{Node, Parser, Query, QueryCursor};
 
-use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
+use crate::parser::{
+    CommentKind, CommentTag, EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult,
+};
 use crate::walker::SourceFile;
 
 pub struct TypeScriptParser;
@@ -178,7 +180,15 @@ impl LanguageParser for TypeScriptParser {
         // Extract CALLS edges by walking the AST with function context tracking
         extract_calls(&mut edges, root, source_bytes, file);
 
-        Ok(ParseResult { nodes, edges })
+        // Extract JSX expression comments and annotation tags (TODO/FIXME/etc.)
+        let mut comment_tags = Vec::new();
+        extract_jsx_comments(&mut comment_tags, root, source_bytes, false);
+
+        Ok(ParseResult {
+            nodes,
+            edges,
+            comment_tags,
+        })
     }
 }
 
@@ -528,5 +538,63 @@ fn walk_for_calls(
 
     if pushed {
         fn_stack.pop();
+    }
+}
+
+const ANNOTATION_TAGS: &[&str] = &[
+    "TODO", "FIXME", "HACK", "NOTE", "BUG", "OPTIMIZE", "WARN", "XXX",
+];
+
+/// Recursively walk the AST extracting annotation comments (TODO/FIXME/etc.).
+/// `in_jsx_expression` tracks whether we are inside a `jsx_expression` node,
+/// which is how `{/* ... */}` comments appear in the TSX grammar.
+fn extract_jsx_comments(
+    tags: &mut Vec<CommentTag>,
+    node: Node,
+    source: &[u8],
+    in_jsx_expression: bool,
+) {
+    let kind = node.kind();
+
+    // Track whether we're entering a jsx_expression wrapper
+    let now_in_jsx = in_jsx_expression || kind == "jsx_expression";
+
+    if kind == "comment" {
+        let raw = node.utf8_text(source).unwrap_or("").trim();
+
+        let comment_kind = if in_jsx_expression {
+            // Strip `/*` / `*/` delimiters and check for commented-out JSX code
+            let inner = raw.trim_start_matches("/*").trim_end_matches("*/").trim();
+            if inner.starts_with('<') || inner.contains("</") || inner.contains("/>") {
+                CommentKind::JsxCommentedCode
+            } else {
+                CommentKind::JsxExpression
+            }
+        } else {
+            CommentKind::Standard
+        };
+
+        let upper = raw.to_uppercase();
+        for &tag in ANNOTATION_TAGS {
+            if upper.contains(tag) {
+                tags.push(CommentTag {
+                    tag_type: tag.to_string(),
+                    text: raw.to_string(),
+                    line: node.start_position().row as u32 + 1,
+                    comment_kind: comment_kind.clone(),
+                });
+                break;
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            extract_jsx_comments(tags, cursor.node(), source, now_in_jsx);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
     }
 }

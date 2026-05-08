@@ -101,7 +101,11 @@ impl LanguageParser for GoParser {
         // Extract calls
         extract_calls(&mut edges, root, source_bytes, file);
 
-        Ok(ParseResult { nodes, edges })
+        Ok(ParseResult {
+            nodes,
+            edges,
+            ..Default::default()
+        })
     }
 }
 

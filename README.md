@@ -56,6 +56,8 @@ cgx hotspots
 |---|---|
 | **AST Parsing** | Tree-sitter parses TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP in parallel |
 | **JSX Caller Tracking** | React component usages (`<MyComp />`) are tracked as call edges |
+| **JSX Comment Extraction** | `{/* TODO */}` expression comments and commented-out JSX code are extracted and tagged separately from code comments |
+| **Annotation Index** | `cgx todos` lists all TODO/FIXME/HACK/NOTE tags with `comment_type` (code vs jsx vs jsx_commented_code) |
 | **Git Intelligence** | Churn scores, co-change edges, ownership — the temporal graph |
 | **DuckDB Storage** | Zero-server embedded graph database. Instant queries. |
 | **Community Detection** | Leiden algorithm auto-clusters your codebase into modules |
@@ -395,8 +397,8 @@ Combined with in-degree, this gives you the hotspot score.
 
 | Language | Parser | Status |
 |---|---|---|
-| TypeScript / TSX | tree-sitter-typescript | ✅ Stable |
-| JavaScript / JSX | tree-sitter-javascript | ✅ Stable |
+| TypeScript / TSX | tree-sitter-typescript | ✅ Stable — incl. JSX comment extraction |
+| JavaScript / JSX | tree-sitter-javascript | ✅ Stable — incl. JSX comment extraction |
 | Python | tree-sitter-python | ✅ Stable |
 | Rust | tree-sitter-rust | ✅ Stable |
 | Go | tree-sitter-go | ✅ Stable |
