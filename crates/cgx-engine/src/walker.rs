@@ -127,7 +127,7 @@ pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
         // Belt-and-suspenders: reject files inside any excluded directory component
         if relative_path
             .split('/')
-            .any(|component| should_skip_dir(component))
+            .any(should_skip_dir)
         {
             continue;
         }
