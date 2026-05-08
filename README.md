@@ -74,6 +74,18 @@ cgx hotspots
 
 ## Installation
 
+### Homebrew (macOS / Linux) — recommended
+
+```bash
+brew install aayushbahukhandi/cgx/cgx
+```
+
+To update:
+
+```bash
+brew upgrade aayushbahukhandi/cgx/cgx
+```
+
 ### cargo
 
 ```bash
@@ -96,34 +108,43 @@ fish_add_path "$HOME/.cargo/bin"
 
 ### Pre-built binary (Windows, macOS, Linux)
 
-Download from [GitHub Releases](https://github.com/AayushBahukhandi/cgx/releases/latest).
+Download the latest release from [GitHub Releases](https://github.com/AayushBahukhandi/cgx/releases/latest). Replace `VERSION` with the tag shown on that page (e.g. `v0.1.7`).
 
 ```bash
 # macOS arm64 (Apple Silicon)
-curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.3-aarch64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-VERSION-aarch64-apple-darwin.tar.gz | tar xz
 sudo mv cgx /usr/local/bin/
 
 # macOS x86_64 (Intel)
-curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.3-x86_64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-VERSION-x86_64-apple-darwin.tar.gz | tar xz
 sudo mv cgx /usr/local/bin/
 
 # Linux x86_64
-curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-v0.1.3-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/AayushBahukhandi/cgx/releases/latest/download/cgx-VERSION-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv cgx /usr/local/bin/
 ```
 
-Windows users: download the `.zip` from the releases page and place `cgx.exe` in a directory on your `%PATH%`.
-
-### Homebrew (macOS / Linux)
-
-> **Coming soon.** A tap is planned. Until then use `cargo install cgx-cli` or the pre-built binary above.
+Windows: download the `.zip` from the releases page and place `cgx.exe` in a directory on your `%PATH%`.
 
 ### Verify
 
 ```bash
-cgx --version   # should print 0.1.3
+cgx --version
 cgx doctor      # checks your setup and editor integrations
 ```
+
+### Staying up to date
+
+Starting from **v0.1.6**, cgx checks for updates once a day and prints a notice when a newer version is available. You can also check and update manually:
+
+```bash
+cgx update          # show installed version, latest version, and upgrade instructions
+cgx update --auto   # detect your install method and upgrade automatically
+```
+
+Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
+
+> **On v0.1.5 or older?** The update checker was added in v0.1.6, so no notification will appear. Upgrade once manually using your install method above, and automatic notices will work from then on.
 
 ---
 
@@ -474,7 +495,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## Roadmap
 
-- [ ] Homebrew formula + tap
 - [ ] `cgx changelog` — generate changelogs from graph diffs
 - [ ] VS Code extension
 - [ ] `cgx watch` with debounced incremental indexing
@@ -499,15 +519,7 @@ Already live at `https://aayushbahukhandi.github.io/cgx/`. The `deploy-pages.yml
 
 ### Homebrew
 
-A tap requires a separate `homebrew-cgx` repo. After the first release builds, get the SHA256 hashes:
-
-```bash
-shasum -a 256 cgx-v0.1.3-aarch64-apple-darwin.tar.gz
-shasum -a 256 cgx-v0.1.3-x86_64-apple-darwin.tar.gz
-shasum -a 256 cgx-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
-```
-
-Then create `Formula/cgx.rb` in `homebrew-cgx` pointing at the release tarballs with those hashes.
+The tap lives at [AayushBahukhandi/homebrew-cgx](https://github.com/AayushBahukhandi/homebrew-cgx). The formula is updated automatically by the `update-homebrew-tap` job in `release.yml` every time a `v*` tag is pushed — no manual steps needed.
 
 ---
 
