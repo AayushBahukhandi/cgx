@@ -44,8 +44,8 @@ cgx hotspots
 
 # Instead of asking your AI to read everything:
 # CGX_SKILL.md is auto-generated in your repo root.
-# Your AI assistant reads it and queries the graph instead of files.
-# 71x fewer tokens. Same answers.
+# Your AI reads it and queries the graph instead of opening files.
+# get_repo_summary = ~1,000 tokens. Reading 40 files = ~400,000 tokens.
 ```
 
 ---
@@ -282,7 +282,8 @@ The skill file tells your AI:
 - Mandatory trigger language so the AI fires cgx without being asked
 
 **Result:** Your AI stops reading 40 files to answer an architectural question
-and runs one `cgx query` command instead. 71x fewer tokens. Same answer.
+and runs one `cgx query` command instead. `get_repo_summary` costs ~1,000 tokens;
+reading 40 files costs ~400,000. Same answer, 400x cheaper.
 
 ### Method 1b — `/cgx` slash command in Claude Code
 
@@ -302,22 +303,25 @@ cgx setup    # auto-detects your editors and writes their MCP configs
 
 Restart your editor. cgx now exposes 10 typed tools your AI can call directly:
 
-| Tool | What it answers |
-|---|---|
-| `get_repo_summary` | Full architectural overview — called first every session |
-| `find_symbol` | Where is X defined? File + line |
-| `get_neighbors` | What does X depend on? What depends on X? |
-| `get_blast_radius` | What breaks if I change X? Risk level. |
-| `get_call_chain` | Trace from A to B through the call graph |
-| `get_community` | All nodes in the auth/db/payments cluster |
-| `search_graph` | Full-text search over all symbol names |
-| `get_hotspots` | Highest churn × coupling nodes |
-| `get_file_owners` | Git blame ownership for any file |
-| `run_query` | Raw SQL SELECT against the graph (read-only) |
+| Tool | What it answers | Typical tokens |
+|---|---|---|
+| `get_repo_summary` | Architecture overview: nodes, communities, hotspots, god nodes | ~1,000 |
+| `find_symbol` | Where is X defined? File + line | ~50 |
+| `get_neighbors` | What does X depend on? What depends on X? | ~200 |
+| `get_blast_radius` | What breaks if I change X? Risk level + affected count | ~300 |
+| `get_call_chain` | Trace from A to B through the call graph | ~150 |
+| `get_community` | All nodes in the auth/db/payments cluster | ~400 |
+| `search_graph` | Full-text search over all symbol names | ~200 |
+| `get_hotspots` | Highest churn × coupling files | ~200 |
+| `get_file_owners` | Git blame ownership for any file | ~100 |
+| `run_query` | Raw SQL SELECT against the graph (read-only) | varies |
+
+Every response includes a `_summary` field — a plain-text sentence the model
+reads first before parsing JSON, so it can skip deeper inspection when not needed.
 
 **Example:** Ask "refactor the login function to add rate limiting" in Claude Code.
 It calls `get_blast_radius`, `get_neighbors`, and `get_file_owners` — 3 tool calls,
-under 3,000 tokens — then writes the code knowing exactly what it needs to update.
+under **1,500 tokens total** — then writes the code knowing exactly what it needs to update.
 
 ---
 
@@ -401,6 +405,8 @@ Combined with in-degree, this gives you the hotspot score.
 | GitHub Pages publish | ✅ | ❌ | ❌ |
 | Self-contained binary | ✅ | ❌ | ❌ |
 | LLM required for indexing | ❌ Never | ❌ Never | ✅ Always |
+| Session context overhead | ~1,700 tokens | unknown | ~15,000 tokens |
+| `get_repo_summary` cost | ~1,000 tokens | n/a MCP | no MCP |
 | License | MIT | Non-commercial | MIT |
 
 ---
