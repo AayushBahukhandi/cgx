@@ -24,6 +24,36 @@ pub struct SourceFile {
     pub size_bytes: u64,
 }
 
+/// Directory names that are never source code — skip them entirely.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "__pycache__",
+    ".git",
+    ".next",
+    "out",
+    "coverage",
+    "vendor",
+    "venv",
+    ".venv",
+    ".tox",
+    "build",
+    "generated",
+];
+
+/// A directory name matches this if it ends with one of these suffixes (after a `-` or `_`).
+const SKIP_DIR_SUFFIXES: &[&str] = &["-dist", "_dist", "-build", "_build", "-out", "_out"];
+
+fn should_skip_dir(name: &str) -> bool {
+    if SKIP_DIRS.contains(&name) {
+        return true;
+    }
+    SKIP_DIR_SUFFIXES
+        .iter()
+        .any(|suf| name.ends_with(suf))
+}
+
 pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
     let mut files = Vec::new();
     let canonical = repo_path.canonicalize()?;
@@ -31,19 +61,23 @@ pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
     let mut walker = WalkBuilder::new(&canonical);
     walker.standard_filters(true);
     walker.hidden(true);
-    // Explicitly add overrides for common non-source directories
-    let mut override_builder = ignore::overrides::OverrideBuilder::new(&canonical);
-    for pattern in &[
-        "!node_modules/",
-        "!target/",
-        "!dist/",
-        "!__pycache__/",
-        "!.git/",
-    ] {
-        let _ = override_builder.add(pattern);
-    }
-    let overrides = override_builder.build()?;
-    walker.overrides(overrides);
+    // Respect .cgxignore files anywhere in the tree (same semantics as .gitignore)
+    walker.add_custom_ignore_filename(".cgxignore");
+    // Programmatic directory filter: prune entire build-artifact trees early
+    walker.filter_entry(|e| {
+        if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            let name = e.file_name().to_string_lossy();
+            // Also skip minified single-file bundles inside any directory
+            !should_skip_dir(&name)
+        } else {
+            // Skip minified / bundled JS files by name convention
+            let name = e.file_name().to_string_lossy();
+            !name.ends_with(".min.js")
+                && !name.ends_with(".min.ts")
+                && !name.ends_with(".bundle.js")
+                && !name.ends_with(".chunk.js")
+        }
+    });
 
     for entry in walker.build() {
         let entry = match entry {
@@ -89,6 +123,14 @@ pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
             Ok(r) => r.to_string_lossy().to_string(),
             Err(_) => path.to_string_lossy().to_string(),
         };
+
+        // Belt-and-suspenders: reject files inside any excluded directory component
+        if relative_path
+            .split('/')
+            .any(|component| should_skip_dir(component))
+        {
+            continue;
+        }
 
         files.push(SourceFile {
             path,

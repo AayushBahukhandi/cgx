@@ -42,51 +42,49 @@ Use cgx commands INSTEAD of reading source files when you need to:
 **Rule: Never open a file speculatively. Query first. Open only if you need
 the implementation body — not to find where something lives.**
 
-## Trigger Patterns
+## Trigger Patterns — MANDATORY
 
-Run cgx automatically when the user says or implies any of:
+You MUST run cgx (CLI or MCP) automatically — without waiting to be asked — whenever:
 - "what calls X" / "who uses X" / "what depends on X"
-- "show me the architecture" / "how does this work"
+- "show me the architecture" / "how does this work" / "explain X"
 - "what breaks if I change X" / "blast radius of X"
-- "find X in the codebase" / "where is X defined"
-- "who owns X" / "who wrote X"
-- "is X used anywhere" / "is X dead code"
-- Starting a new task in an unfamiliar part of the codebase
-- Before making any edit to a function with many callers
+- "find X in the codebase" / "where is X defined" / "where is X used"
+- "who owns X" / "who wrote X" / "git blame X"
+- "is X used anywhere" / "is X dead code" / "can I delete X"
+- Starting ANY new task — run `cgx summary` before touching any file
+- Before ANY edit — run `cgx query blast-radius` on the target function
+- After any question about code structure, dependencies, or architecture
+
+Never grep or open source files to answer structural questions. cgx is always faster and cheaper.
 
 ## Commands
 
+If cgx is available as an MCP tool (preferred — no subprocess):
+```
+get_repo_summary            # orient: nodes, communities, hotspots
+find_symbol <name>          # locate any function/class/type
+get_blast_radius <node_id>  # what breaks if this changes
+get_neighbors <node_id>     # direct dependencies
+get_call_chain <from> <to>  # trace a call path
+get_hotspots                # riskiest files to edit
+get_file_owners <path>      # git blame ownership
+search_graph <query>        # full-text search
+run_query <sql>             # raw SQL against the graph
+```
+
+If cgx is available as a CLI:
 ```bash
-# Always run first in a new session
-cgx summary
-
-# Find any symbol
-cgx query find <name>
+cgx summary                           # orient yourself
+cgx query find <name>                 # locate a symbol
 cgx query find <name> --kind=Function
-
-# Dependencies of a node
-cgx query deps <node-name>
-
-# Blast radius — run BEFORE every edit
-cgx query blast-radius <function-name>
-
-# Trace a call path
-cgx query chain "<A> -> <B>"
-
-# High-risk files
-cgx hotspots
-
-# Code ownership
-cgx query owners <path>
-
-# Search by concept
-cgx query search "<phrase>"
-
-# Community / cluster
-cgx query community <id-or-name>
-
-# Dead code
-cgx query dead-code
+cgx query blast-radius <function>     # change impact (run BEFORE every edit)
+cgx query deps <node-name>            # what does this depend on
+cgx query chain "<A> -> <B>"          # trace call path
+cgx hotspots                          # high-risk files
+cgx query owners <path>               # file ownership
+cgx query search "<phrase>"           # search by concept
+cgx query community <id-or-name>      # explore a cluster
+cgx query dead-code                   # find unused exports
 ```
 
 ## Workflow: Starting a Task
@@ -162,36 +160,7 @@ Files/functions with no inbound dependencies — safe places to start tracing.
 These are used everywhere. Breaking them has maximum blast radius.
 {{ god_nodes_list }}
 
-## How to Use This Index
-
-### With MCP (structured queries — recommended)
-After `cgx setup` + editor restart, cgx tools are available directly in chat:
-- `get_repo_summary` — full architectural overview
-- `find_symbol <name>` — locate any function, class, or variable
-- `get_neighbors <node_id>` — direct dependencies of a node
-- `get_blast_radius <node_id>` — what breaks if this changes
-- `get_call_chain <from> <to>` — trace a call path
-- `get_hotspots` — riskiest files to edit
-- `get_file_owners <path>` — git blame ownership
-- `run_query <sql>` — raw SQL against the graph database
-
-### With CLI (fallback)
-```
-cgx summary                     # architectural overview
-cgx query find <name>           # locate a symbol
-cgx query blast-radius <name>   # change impact analysis
-cgx query deps <name>           # what does this depend on
-cgx query chain "<A> -> <B>"    # trace call path
-cgx query owners <path>         # file ownership
-cgx query dead-code             # unused exports
-```
-
-## AI Integration
-1. **Start every session** with `get_repo_summary` (MCP) or `cgx summary` (CLI) to orient yourself.
-2. **Before editing** any hotspot file, call `get_blast_radius` — the risk score tells you how careful to be.
-3. **To find a symbol**, use `find_symbol` instead of grepping source files — it's 10× faster.
-4. **Community IDs** in node metadata tell you which module a node belongs to; use `get_community` to explore the whole cluster.
-5. **God nodes** (above) are used by many callers — any change there needs tests across all callers.
+> Query this graph before opening any file. See `CGX_SKILL.md` for full command reference.
 "#;
 
 pub fn build_skill_data(db: &GraphDb) -> anyhow::Result<SkillData> {

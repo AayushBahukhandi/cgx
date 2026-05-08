@@ -281,10 +281,6 @@ fn test_generate_agents_md_has_no_placeholders() {
         "missing 'Entry Points' section"
     );
     assert!(
-        agents.contains("## AI Integration"),
-        "missing 'AI Integration' section"
-    );
-    assert!(
         agents.contains("CGX_SKILL.md"),
         "should mention CGX_SKILL.md"
     );
