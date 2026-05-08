@@ -32,6 +32,11 @@ const SUGGESTIONS = [
   "Who owns the most files?",
 ];
 
+function localApiAvailable() {
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host.endsWith(".local");
+}
+
 export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -41,6 +46,7 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const hasLocalApi = localApiAvailable();
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -64,7 +70,7 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
   const sendMessage = useCallback(
     async (overrideMessage?: string) => {
       const msg = (overrideMessage || input).trim();
-      if (!msg || streaming) return;
+      if (!msg || streaming || !hasLocalApi) return;
 
       setError(null);
       setInput("");
@@ -180,7 +186,7 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
         abortRef.current = null;
       }
     },
-    [input, messages, streaming]
+    [hasLocalApi, input, messages, streaming]
   );
 
   const stopStreaming = useCallback(() => {
@@ -212,7 +218,7 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
           background: "#1a1a26",
           border: "1px solid #2a2a3e",
         }}
-        title="Chat with codebase"
+        title={hasLocalApi ? "Chat with codebase" : "Chat unavailable on hosted pages"}
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00ff88" strokeWidth="2" strokeLinecap="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -288,27 +294,38 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
       >
         {messages.length === 0 && !error && (
           <div className="py-4 space-y-2">
-            <p
-              className="text-xs mb-2"
-              style={{ color: "#444466", fontFamily: "JetBrains Mono, monospace" }}
-            >
-              Ask a question about this codebase:
-            </p>
-            {SUGGESTIONS.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => sendMessage(s)}
-                className="w-full text-left px-2 py-1.5 rounded-sm text-xs hover:opacity-80 transition-colors truncate"
-                style={{
-                  background: "#1a1a26",
-                  color: "#8888aa",
-                  fontFamily: "JetBrains Mono, monospace",
-                  border: "1px solid #252535",
-                }}
+            {hasLocalApi ? (
+              <>
+                <p
+                  className="text-xs mb-2"
+                  style={{ color: "#444466", fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  Ask a question about this codebase:
+                </p>
+                {SUGGESTIONS.map((s, i) => (
+                  <button
+                    key={i}
+                    onClick={() => sendMessage(s)}
+                    className="w-full text-left px-2 py-1.5 rounded-sm text-xs hover:opacity-80 transition-colors truncate"
+                    style={{
+                      background: "#1a1a26",
+                      color: "#8888aa",
+                      fontFamily: "JetBrains Mono, monospace",
+                      border: "1px solid #252535",
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <p
+                className="text-xs leading-relaxed"
+                style={{ color: "#555570", fontFamily: "JetBrains Mono, monospace" }}
               >
-                {s}
-              </button>
-            ))}
+                Chat is currently unavailable on the public viewer.
+              </p>
+            )}
           </div>
         )}
 
@@ -397,11 +414,11 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
             onKeyDown={handleKeyDown}
             placeholder="Ask about the codebase..."
             rows={2}
-            disabled={streaming}
+            disabled={streaming || !hasLocalApi}
             className="flex-1 resize-none px-2 py-1.5 text-xs rounded-sm outline-none"
             style={{
-              background: "#0a0a10",
-              color: "#ccccdd",
+              background: hasLocalApi ? "#0a0a10" : "#111118",
+              color: hasLocalApi ? "#ccccdd" : "#444466",
               fontFamily: "JetBrains Mono, monospace",
               border: "1px solid #252535",
               minHeight: "36px",
@@ -409,12 +426,12 @@ export default function ChatPanel({ selectedNode, onSelectNode }: Props) {
           />
           <button
             onClick={() => sendMessage()}
-            disabled={streaming || !input.trim()}
+            disabled={streaming || !input.trim() || !hasLocalApi}
             className="px-3 rounded-sm text-xs font-bold transition-opacity"
             style={{
-              background: input.trim() && !streaming ? "#00ff8822" : "#1a1a26",
-              color: input.trim() && !streaming ? "#00ff88" : "#444466",
-              border: `1px solid ${input.trim() && !streaming ? "#00ff8844" : "#252535"}`,
+              background: input.trim() && !streaming && hasLocalApi ? "#00ff8822" : "#1a1a26",
+              color: input.trim() && !streaming && hasLocalApi ? "#00ff88" : "#444466",
+              border: `1px solid ${input.trim() && !streaming && hasLocalApi ? "#00ff8844" : "#252535"}`,
               fontFamily: "Syne, sans-serif",
             }}
           >

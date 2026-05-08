@@ -289,6 +289,10 @@ enum QueryCmd {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    if !matches!(&cli.command, Commands::Update { .. }) {
+        maybe_show_update_notice();
+    }
+
     let result = match cli.command {
         Commands::Parse { path, json } => {
             let repo_path = path.unwrap_or_else(|| PathBuf::from("."));
@@ -4023,6 +4027,145 @@ fn cmd_clean_all() -> anyhow::Result<()> {
 // UPDATE
 // ─────────────────────────────────────────────────────────────────────────────
 
+const UPDATE_CHECK_INTERVAL_SECS: i64 = 60 * 60 * 24;
+const LATEST_RELEASE_URL: &str =
+    "https://api.github.com/repos/AayushBahukhandi/cgx/releases/latest";
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct UpdateCheckCache {
+    latest_version: String,
+    checked_at: i64,
+}
+
+fn maybe_show_update_notice() {
+    if update_check_disabled() {
+        return;
+    }
+
+    let current = env!("CARGO_PKG_VERSION");
+    let cache_path = update_check_cache_path();
+    let cached = read_update_check_cache(&cache_path);
+
+    if let Some(cache) = cached.as_ref() {
+        if version_is_newer(&cache.latest_version, current) {
+            print_update_notice(current, &cache.latest_version);
+            return;
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        if now.saturating_sub(cache.checked_at) < UPDATE_CHECK_INTERVAL_SECS {
+            return;
+        }
+    }
+
+    let latest = match fetch_latest_version_blocking() {
+        Ok(version) => version,
+        Err(_) => return,
+    };
+
+    let _ = write_update_check_cache(
+        &cache_path,
+        &UpdateCheckCache {
+            latest_version: latest.clone(),
+            checked_at: chrono::Utc::now().timestamp(),
+        },
+    );
+
+    if version_is_newer(&latest, current) {
+        print_update_notice(current, &latest);
+    }
+}
+
+fn update_check_disabled() -> bool {
+    std::env::var("CGX_NO_UPDATE_CHECK")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn update_check_cache_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cgx")
+        .join("update-check.json")
+}
+
+fn read_update_check_cache(path: &Path) -> Option<UpdateCheckCache> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+}
+
+fn write_update_check_cache(path: &Path, cache: &UpdateCheckCache) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_vec(cache)?)?;
+    Ok(())
+}
+
+fn fetch_latest_version_blocking() -> anyhow::Result<String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async {
+        let client = reqwest::Client::builder()
+            .user_agent("cgx-cli")
+            .timeout(Duration::from_millis(900))
+            .build()?;
+
+        let resp = client.get(LATEST_RELEASE_URL).send().await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("GitHub release check failed: {}", resp.status());
+        }
+
+        let body: serde_json::Value = resp.json().await?;
+        let tag = body["tag_name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("GitHub release response missing tag_name"))?;
+
+        Ok(tag.trim_start_matches('v').to_string())
+    })
+}
+
+fn version_is_newer(candidate: &str, current: &str) -> bool {
+    let candidate_parts = parse_version_parts(candidate);
+    let current_parts = parse_version_parts(current);
+
+    for idx in 0..candidate_parts.len().max(current_parts.len()) {
+        let candidate_part = *candidate_parts.get(idx).unwrap_or(&0);
+        let current_part = *current_parts.get(idx).unwrap_or(&0);
+        if candidate_part > current_part {
+            return true;
+        }
+        if candidate_part < current_part {
+            return false;
+        }
+    }
+
+    false
+}
+
+fn parse_version_parts(version: &str) -> Vec<u64> {
+    version
+        .split(['.', '-', '+'])
+        .take_while(|part| part.chars().all(|c| c.is_ascii_digit()))
+        .filter_map(|part| part.parse().ok())
+        .collect()
+}
+
+fn print_update_notice(current: &str, latest: &str) {
+    eprintln!();
+    eprintln!(
+        "  Update available: {} -> {}",
+        current,
+        latest.trim_start_matches('v')
+    );
+    eprintln!("  Run brew upgrade cgx or cargo install cgx-cli to update.");
+    eprintln!("  See full release notes:");
+    eprintln!("  https://github.com/AayushBahukhandi/cgx/releases/latest");
+    eprintln!();
+}
+
 fn cmd_update(auto: bool) -> anyhow::Result<()> {
     use std::process::Command;
 
@@ -4031,6 +4174,26 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
     println!("  cgx update");
     println!("  {}", "\u{2500}".repeat(60));
     println!("  installed version: {}", current);
+    match fetch_latest_version_blocking() {
+        Ok(latest) => {
+            let _ = write_update_check_cache(
+                &update_check_cache_path(),
+                &UpdateCheckCache {
+                    latest_version: latest.clone(),
+                    checked_at: chrono::Utc::now().timestamp(),
+                },
+            );
+            println!("  latest version:    {}", latest);
+            if version_is_newer(&latest, current) {
+                println!("  status:            update available");
+            } else {
+                println!("  status:            up to date");
+            }
+        }
+        Err(_) => {
+            println!("  latest version:    could not check");
+        }
+    }
     println!();
 
     // Try to detect installation method

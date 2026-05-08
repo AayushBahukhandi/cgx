@@ -21,6 +21,11 @@ interface Props {
   lineEnd: number;
 }
 
+function localApiAvailable() {
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host.endsWith(".local");
+}
+
 const PRISM_LANG: Record<string, string> = {
   typescript: "tsx",
   javascript: "javascript",
@@ -47,11 +52,21 @@ export default function SnippetPreview({ path, lineStart, lineEnd }: Props) {
   const rawTo = lineEnd > lineStart ? lineEnd : from + 15;
   // Show at least 8 lines of context so tiny functions don't appear as a single line
   const to = rawTo - from < 7 ? from + 7 : rawTo;
+  const hasLocalApi = localApiAvailable();
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+
+    if (!hasLocalApi) {
+      setData(null);
+      setLoading(false);
+      setError("Source snippets are available in local serve mode only.");
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const url = `/api/snippet?path=${encodeURIComponent(path)}&from=${from}&to=${to}`;
     fetch(url)
@@ -83,7 +98,7 @@ export default function SnippetPreview({ path, lineStart, lineEnd }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [path, from, to]);
+  }, [path, from, to, hasLocalApi]);
 
   const handleOpen = async () => {
     try {
