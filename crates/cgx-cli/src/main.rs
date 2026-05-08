@@ -2760,9 +2760,7 @@ fn install_claude_skill(home: &str, cgx_path: &str, dry_run: bool) {
     }
 
     // Patch ~/.claude/CLAUDE.md to register /cgx
-    let entry = format!(
-        "\n# cgx\n- **cgx** (`~/.claude/skills/cgx/SKILL.md`) - index any Git repo as a queryable knowledge graph. Trigger: `/cgx`\nWhen the user types `/cgx`, invoke the Skill tool with `skill: \"cgx\"` before doing anything else.\n"
-    );
+    let entry = "\n# cgx\n- **cgx** (`~/.claude/skills/cgx/SKILL.md`) - index any Git repo as a queryable knowledge graph. Trigger: `/cgx`\nWhen the user types `/cgx`, invoke the Skill tool with `skill: \"cgx\"` before doing anything else.\n".to_string();
     if Path::new(&claude_md).exists() {
         if let Ok(existing) = std::fs::read_to_string(&claude_md) {
             if !existing.contains("skills/cgx/SKILL.md") {
