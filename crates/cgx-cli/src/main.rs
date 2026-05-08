@@ -4160,7 +4160,7 @@ fn print_update_notice(current: &str, latest: &str) {
         current,
         latest.trim_start_matches('v')
     );
-    eprintln!("  Run brew upgrade cgx or cargo install cgx-cli to update.");
+    eprintln!("  Run brew upgrade aayushbahukhandi/cgx/cgx or cargo install cgx-cli to update.");
     eprintln!("  See full release notes:");
     eprintln!("  https://github.com/AayushBahukhandi/cgx/releases/latest");
     eprintln!();
@@ -4219,10 +4219,14 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
                 anyhow::bail!("cargo install failed");
             }
         } else if is_homebrew {
-            println!("  Detected Homebrew installation. Running: brew upgrade cgx");
-            let status = Command::new("brew").args(["upgrade", "cgx"]).status()?;
+            println!(
+                "  Detected Homebrew installation. Running: brew upgrade aayushbahukhandi/cgx/cgx"
+            );
+            let status = Command::new("brew")
+                .args(["upgrade", "aayushbahukhandi/cgx/cgx"])
+                .status()?;
             if status.success() {
-                println!("  \u{2713} update complete");
+                println!("  \u{2713} update complete — restart your shell or open a new terminal");
             } else {
                 anyhow::bail!("brew upgrade failed");
             }
@@ -4238,7 +4242,7 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
         println!("    cargo install cgx-cli");
         println!();
         println!("  Homebrew:");
-        println!("    brew upgrade cgx");
+        println!("    brew upgrade aayushbahukhandi/cgx/cgx");
         println!();
         println!("  Pre-built binary:");
         println!("    Download latest release from:");
