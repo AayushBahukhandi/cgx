@@ -64,8 +64,9 @@ cgx hotspots
 | **Terminal TUI** | Force-directed graph in Ratatui. Works over SSH. |
 | **WebGL Browser Graph** | Sigma.js renders thousands of nodes at 60fps |
 | **AI Chat** | Ask questions about your code in natural language. Ollama supported. |
-| **MCP Server** | 10 typed tools for Cursor, Claude Code, Windsurf |
-| **Skills System** | `CGX_SKILL.md` auto-generated — works in any AI assistant |
+| **MCP Server** | 10 typed tools for Cursor, Claude Code, Windsurf, Codex/OpenCode |
+| **Skills System** | `CGX_SKILL.md` auto-generated — works in any AI assistant; `/cgx` slash command in Claude Code via `cgx setup` |
+| **Build artifact exclusion** | `web-ui-dist/`, `.next/`, `coverage/`, `*.min.js` etc. excluded automatically; customizable via `.cgxignore` |
 | **Share Links** | `cgx share` uploads your graph to a Gist — anyone views it in a browser, no install needed |
 | **GitHub Pages Publish** | `cgx publish` pushes a self-contained graph site to your `gh-pages` branch |
 | **Graph Diff** | See how your architecture changed between commits |
@@ -146,7 +147,7 @@ cgx update --auto   # detect your install method and upgrade automatically
 
 Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 
-> **On v0.1.5 or older?** The update checker was added in v0.1.6, so no notification will appear. Upgrade once manually using your install method above, and automatic notices will work from then on.
+> **On v0.1.8 or older?** Run `cgx update --auto` or reinstall. v0.1.9 fixes a significant issue where build artifacts (`web-ui-dist/`, `*.min.js`, etc.) were included in the graph, producing garbage god nodes and wrong language stats. Re-run `cgx analyze --force` after upgrading to get a clean index.
 
 ---
 
@@ -276,13 +277,24 @@ Cursor, GitHub Copilot Chat, Gemini CLI — will automatically use it.
 
 The skill file tells your AI:
 - When to call `cgx query` instead of reading source files
-- The exact command for every type of question
-- Live stats about your codebase baked in (hotspots, communities, entry points)
+- Both MCP tool names (`get_blast_radius`) and CLI equivalents (`cgx query blast-radius`) in one place
+- Live stats about your codebase (hotspots, communities, entry points)
+- Mandatory trigger language so the AI fires cgx without being asked
 
 **Result:** Your AI stops reading 40 files to answer an architectural question
 and runs one `cgx query` command instead. 71x fewer tokens. Same answer.
 
-### Method 2 — MCP Server (for Cursor, Claude Code, Windsurf)
+### Method 1b — `/cgx` slash command in Claude Code
+
+```bash
+cgx setup   # installs ~/.claude/skills/cgx/SKILL.md + registers /cgx
+```
+
+After running `cgx setup`, type `/cgx` in Claude Code to analyze any repo
+interactively — even repos that haven't been pre-indexed. Works like `/graphify`
+but for structural code queries rather than knowledge graph building.
+
+### Method 2 — MCP Server (for Cursor, Claude Code, Windsurf, Codex/OpenCode)
 
 ```bash
 cgx setup    # auto-detects your editors and writes their MCP configs
@@ -417,14 +429,32 @@ Want a language added? [Open an issue](https://github.com/AayushBahukhandi/cgx/i
 
 cgx has no config file for basic usage. Everything has sensible defaults.
 
-For advanced configuration, create `.cgx/config.toml` in your repo root:
+### Excluding paths from analysis
+
+cgx automatically skips build artifacts: `node_modules/`, `target/`, `dist/`, `*-dist/` (e.g. `web-ui-dist/`), `.next/`, `coverage/`, `vendor/`, `venv/`, `*.min.js`, `*.bundle.js`, and similar.
+
+For custom exclusions, create `.cgxignore` in your repo root — same syntax as `.gitignore`:
+
+```gitignore
+# .cgxignore
+generated/
+proto/
+vendor/
+*_pb.ts
+```
+
+`.cgxignore` files in subdirectories also work (scoped to that subtree).
+
+### Advanced configuration
+
+For further customization, create `.cgx/config.toml` in your repo root:
 
 ```toml
 [analyze]
 # Languages to parse (default: all supported)
 languages = ["typescript", "javascript", "python"]
 
-# Directories to skip beyond .gitignore
+# Directories to skip (prefer .cgxignore for per-repo exclusions)
 exclude = ["vendor/", "generated/", "*.pb.go"]
 
 # Git history window for churn calculation (days)

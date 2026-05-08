@@ -2739,6 +2739,44 @@ fn resolve_id(all_nodes: &[cgx_engine::Node], name_or_id: &str) -> Option<String
         })
 }
 
+const CLAUDE_SKILL_MD: &str = include_str!("claude_skill.md");
+
+fn install_claude_skill(home: &str, cgx_path: &str, dry_run: bool) {
+    let skill_dir = format!("{}/.claude/skills/cgx", home);
+    let skill_file = format!("{}/SKILL.md", skill_dir);
+    let claude_md = format!("{}/.claude/CLAUDE.md", home);
+
+    if dry_run {
+        println!("  → Claude Code skill — would write {}", skill_file);
+        return;
+    }
+
+    // Write SKILL.md
+    if std::fs::create_dir_all(&skill_dir).is_ok() {
+        let content = CLAUDE_SKILL_MD.replace("{{CGX_PATH}}", cgx_path);
+        if std::fs::write(&skill_file, content).is_ok() {
+            println!("  ✓ Claude Code skill  — {}", skill_file);
+        }
+    }
+
+    // Patch ~/.claude/CLAUDE.md to register /cgx
+    let entry = format!(
+        "\n# cgx\n- **cgx** (`~/.claude/skills/cgx/SKILL.md`) - index any Git repo as a queryable knowledge graph. Trigger: `/cgx`\nWhen the user types `/cgx`, invoke the Skill tool with `skill: \"cgx\"` before doing anything else.\n"
+    );
+    if Path::new(&claude_md).exists() {
+        if let Ok(existing) = std::fs::read_to_string(&claude_md) {
+            if !existing.contains("skills/cgx/SKILL.md") {
+                let updated = format!("{}{}", existing, entry);
+                let _ = std::fs::write(&claude_md, updated);
+                println!("  ✓ Registered /cgx in {}", claude_md);
+            }
+        }
+    } else {
+        let _ = std::fs::write(&claude_md, entry.trim_start());
+        println!("  ✓ Created {} with /cgx registration", claude_md);
+    }
+}
+
 fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
     let home = std::env::var("HOME").unwrap_or_default();
     let cgx_path = std::env::current_exe()
@@ -2840,6 +2878,9 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
             name, config_path
         );
     }
+
+    // Install Claude Code skill (~/.claude/skills/cgx/SKILL.md)
+    install_claude_skill(&home, &cgx_path, dry_run);
 
     println!();
     println!("  Restart your editor for changes to take effect.");
