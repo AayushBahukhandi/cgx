@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use cgx_engine::GraphDb;
 
 /// Serialize to compact JSON (no indentation) to minimize token usage.
@@ -10,58 +8,55 @@ fn to_compact(v: &serde_json::Value) -> Result<String, String> {
 pub fn handle_tool_call(
     name: &str,
     args: &serde_json::Value,
-    repo_path: &Path,
+    db: &GraphDb,
 ) -> Result<String, String> {
-    let db = || GraphDb::open(repo_path).map_err(|e| e.to_string());
-
     match name {
-        "get_repo_summary" => tool_get_repo_summary(repo_path),
+        "get_repo_summary" => tool_get_repo_summary(db),
         "find_symbol" => {
             let name_val = get_str(args, "name")?;
             let kind = get_str_opt(args, "kind");
-            tool_find_symbol(&db()?, &name_val, kind.as_deref())
+            tool_find_symbol(db, &name_val, kind.as_deref())
         }
         "get_neighbors" => {
             let node_id = get_str(args, "node_id")?;
             let depth = get_u8(args, "depth", 1);
-            tool_get_neighbors(&db()?, &node_id, depth)
+            tool_get_neighbors(db, &node_id, depth)
         }
         "get_call_chain" => {
             let from = get_str(args, "from")?;
             let to = get_str(args, "to")?;
-            tool_get_call_chain(&db()?, &from, &to)
+            tool_get_call_chain(db, &from, &to)
         }
         "get_blast_radius" => {
             let node_id = get_str(args, "node_id")?;
-            tool_get_blast_radius(&db()?, &node_id)
+            tool_get_blast_radius(db, &node_id)
         }
         "get_community" => {
             let community_id = get_i64(args, "community_id")?;
-            tool_get_community(&db()?, community_id)
+            tool_get_community(db, community_id)
         }
         "search_graph" => {
             let query = get_str(args, "query")?;
             let limit = get_u32(args, "limit", 20);
-            tool_search_graph(&db()?, &query, limit)
+            tool_search_graph(db, &query, limit)
         }
         "get_hotspots" => {
             let top_n = get_u64(args, "top_n", 10);
-            tool_get_hotspots(&db()?, top_n as usize)
+            tool_get_hotspots(db, top_n as usize)
         }
         "get_file_owners" => {
             let file_path = get_str(args, "file_path")?;
-            tool_get_file_owners(&db()?, &file_path)
+            tool_get_file_owners(db, &file_path)
         }
         "run_query" => {
             let sql = get_str(args, "sql")?;
-            tool_run_query(&db()?, &sql)
+            tool_run_query(db, &sql)
         }
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
 
-fn tool_get_repo_summary(repo_path: &Path) -> Result<String, String> {
-    let db = GraphDb::open(repo_path).map_err(|e| e.to_string())?;
+fn tool_get_repo_summary(db: &GraphDb) -> Result<String, String> {
     let node_count = db.node_count().map_err(|e| e.to_string())?;
     let edge_count = db.edge_count().map_err(|e| e.to_string())?;
     let languages = db.get_language_breakdown().map_err(|e| e.to_string())?;

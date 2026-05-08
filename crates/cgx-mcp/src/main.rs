@@ -12,19 +12,7 @@ fn main() -> anyhow::Result<()> {
 
     let canonical = repo_path.canonicalize().unwrap_or(repo_path);
 
-    eprintln!("cgx-mcp: indexing repo at {}", canonical.display());
-
-    // Verify repo is indexed
-    match cgx_engine::GraphDb::open(&canonical) {
-        Ok(db) => {
-            if db.node_count().unwrap_or(0) == 0 {
-                eprintln!("Warning: repo has no indexed graph. Run `cgx analyze` first.");
-            }
-        }
-        Err(_) => {
-            eprintln!("Warning: could not open graph database. Run `cgx analyze` first.");
-        }
-    }
+    eprintln!("cgx-mcp: serving repo at {}", canonical.display());
 
     server::run(&canonical)?;
     Ok(())

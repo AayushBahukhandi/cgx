@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 use anyhow::Context;
+use cgx_engine::GraphDb;
 
 use crate::tools::handle_tool_call;
 
@@ -34,6 +35,13 @@ struct ErrorBody {
 }
 
 pub fn run(repo_path: &Path) -> anyhow::Result<()> {
+    let db = GraphDb::open(repo_path)
+        .context("Failed to open graph database — run `cgx analyze` first")?;
+
+    if db.node_count().unwrap_or(0) == 0 {
+        eprintln!("cgx-mcp: warning: graph is empty — run `cgx analyze` first");
+    }
+
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
     let mut stdout = std::io::stdout().lock();
@@ -68,7 +76,7 @@ pub fn run(repo_path: &Path) -> anyhow::Result<()> {
             continue;
         }
 
-        let response = handle_request(&request, repo_path);
+        let response = handle_request(&request, &db);
 
         writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
         stdout.flush()?;
@@ -77,7 +85,7 @@ pub fn run(repo_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_request(request: &Request, repo_path: &Path) -> Response {
+fn handle_request(request: &Request, db: &GraphDb) -> Response {
     let id = request.id.clone();
 
     match request.method.as_str() {
@@ -132,7 +140,7 @@ fn handle_request(request: &Request, repo_path: &Path) -> Response {
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
 
-            match handle_tool_call(name, &arguments, repo_path) {
+            match handle_tool_call(name, &arguments, db) {
                 Ok(text) => {
                     let result = serde_json::json!({
                         "content": [{ "type": "text", "text": text }]
