@@ -319,11 +319,15 @@ enum QueryCmd {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-
-    if !matches!(&cli.command, Commands::Update { .. }) {
+    // Run before Cli::parse() so the notice is shown even when cgx is invoked
+    // with no subcommand (clap calls process::exit after printing help, never
+    // returning to the code below parse()).
+    let is_update_cmd = std::env::args().nth(1).as_deref() == Some("update");
+    if !is_update_cmd {
         maybe_show_update_notice();
     }
+
+    let cli = Cli::parse();
 
     let result = match cli.command {
         Commands::Parse { path, json } => {
