@@ -49,9 +49,7 @@ fn should_skip_dir(name: &str) -> bool {
     if SKIP_DIRS.contains(&name) {
         return true;
     }
-    SKIP_DIR_SUFFIXES
-        .iter()
-        .any(|suf| name.ends_with(suf))
+    SKIP_DIR_SUFFIXES.iter().any(|suf| name.ends_with(suf))
 }
 
 pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
@@ -125,10 +123,7 @@ pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
         };
 
         // Belt-and-suspenders: reject files inside any excluded directory component
-        if relative_path
-            .split('/')
-            .any(should_skip_dir)
-        {
+        if relative_path.split('/').any(should_skip_dir) {
             continue;
         }
 

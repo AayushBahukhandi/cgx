@@ -251,6 +251,7 @@ mod tests {
             community: 0,
             in_degree: degree,
             out_degree: degree,
+            ..Default::default()
         }
     }
 

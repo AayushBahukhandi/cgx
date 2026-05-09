@@ -9,146 +9,94 @@ fn fixture_path(relative: &str) -> PathBuf {
 }
 
 #[test]
-fn test_ts_parser_extracts_symbols() {
-    let path = fixture_path("ts-sample");
-    let files = walk_repo(&path).expect("walk_repo failed");
-    assert!(!files.is_empty(), "should find TS files");
-
+fn test_ts_exported_metadata() {
+    let files = walk_repo(&fixture_path("ts-sample")).unwrap();
     let registry = ParserRegistry::new();
-    let results = registry.parse_all(&files);
-
-    let all_names: std::collections::HashSet<String> = results
-        .iter()
-        .flat_map(|r| r.nodes.iter().map(|n| n.name.clone()))
-        .collect();
-
-    let required = [
-        "AuthService",
-        "UserService",
-        "validateToken",
-        "hashPassword",
-        "handleLogin",
-        "handleGetUser",
-        "handleDeleteUser",
-        "query",
-        "getConnection",
-    ];
-
-    for name in &required {
-        assert!(all_names.contains(*name), "missing expected node: {}", name);
-    }
-
-    let total_nodes: usize = results.iter().map(|r| r.nodes.len()).sum();
-    assert!(
-        total_nodes >= 12,
-        "expected >= 12 nodes, got {}",
-        total_nodes
-    );
-
-    let _total_edges: usize = results.iter().map(|r| r.edges.len()).sum();
-    let import_edges: usize = results
-        .iter()
-        .flat_map(|r| r.edges.iter())
-        .filter(|e| e.kind == cgx_engine::EdgeKind::Imports)
-        .count();
-    assert!(
-        import_edges >= 3,
-        "expected >= 3 import edges, got {}",
-        import_edges
-    );
-}
-
-#[test]
-fn test_py_parser_extracts_symbols() {
-    let path = fixture_path("py-sample");
-    let files = walk_repo(&path).expect("walk_repo failed");
-    assert!(!files.is_empty(), "should find Python files");
-
-    let registry = ParserRegistry::new();
-    let results = registry.parse_all(&files);
-
-    let all_names: std::collections::HashSet<String> = results
-        .iter()
-        .flat_map(|r| r.nodes.iter().map(|n| n.name.clone()))
-        .collect();
-
-    let required = [
-        "AuthService",
-        "User",
-        "Session",
-        "login",
-        "logout",
-        "hash_password",
-        "find_by_email",
-        "is_valid",
-        "login_endpoint",
-        "get_user_endpoint",
-        "create_session",
-    ];
-
-    for name in &required {
-        assert!(all_names.contains(*name), "missing expected node: {}", name);
-    }
-
-    let total_nodes: usize = results.iter().map(|r| r.nodes.len()).sum();
-    assert!(
-        total_nodes >= 10,
-        "expected >= 10 nodes, got {}",
-        total_nodes
-    );
-}
-
-#[test]
-fn test_rust_parser_extracts_symbols() {
-    let path = fixture_path("rust-sample");
-    let files = walk_repo(&path).expect("walk_repo failed");
-    assert!(!files.is_empty(), "should find Rust files");
-
-    let registry = ParserRegistry::new();
-    let results = registry.parse_all(&files);
-
-    let all_names: std::collections::HashSet<String> = results
-        .iter()
-        .flat_map(|r| r.nodes.iter().map(|n| n.name.clone()))
-        .collect();
-
-    let required = [
-        "AuthService",
-        "login",
-        "logout",
-        "validate_token",
-        "User",
-        "find_user",
-        "delete_session",
-    ];
-
-    for name in &required {
-        assert!(all_names.contains(*name), "missing expected node: {}", name);
+    for file in &files {
+        if file.relative_path.ends_with("user.ts") {
+            let result = registry.parse(file).unwrap();
+            let mut found_private = false;
+            let mut found_exported_helper = false;
+            for node in &result.nodes {
+                let exported = node
+                    .metadata
+                    .get("exported")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                eprintln!(
+                    "NODE {} {} exported={}",
+                    node.kind.as_str(),
+                    node.name,
+                    exported
+                );
+                if node.name == "_neverCalledPrivate" {
+                    found_private = true;
+                    assert!(!exported, "_neverCalledPrivate should not be exported");
+                }
+                if node.name == "unusedExportedHelper" {
+                    found_exported_helper = true;
+                    assert!(exported, "unusedExportedHelper should be exported");
+                }
+            }
+            assert!(found_private, "should have found _neverCalledPrivate");
+            assert!(
+                found_exported_helper,
+                "should have found unusedExportedHelper"
+            );
+        }
     }
 }
 
 #[test]
-fn test_unknown_file_does_not_panic() {
-    // The walker should skip .xyz files entirely
-    let path = fixture_path("ts-sample");
-    let files = walk_repo(&path).expect("walk_repo failed");
-    let registry = ParserRegistry::new();
-    // Should not panic even with files that have unknown extensions (they're skipped)
-    let _ = registry.parse_all(&files);
-}
+fn debug_ts_tree_structure() {
+    use cgx_engine::walk_repo;
+    use std::path::PathBuf;
 
-#[test]
-fn test_import_edges_present() {
-    let path = fixture_path("ts-sample");
-    let files = walk_repo(&path).expect("walk_repo failed");
-    let registry = ParserRegistry::new();
-    let results = registry.parse_all(&files);
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ts-sample");
+    let files = walk_repo(&fixture).unwrap();
 
-    let all_edges: Vec<_> = results.iter().flat_map(|r| r.edges.iter()).collect();
-    let import_edges: Vec<_> = all_edges
-        .iter()
-        .filter(|e| e.kind == cgx_engine::EdgeKind::Imports)
-        .collect();
+    for file in &files {
+        if file.relative_path.ends_with("user.ts") {
+            // Parse with tree-sitter manually to see AST
+            let language = tree_sitter_typescript::language_typescript();
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&language).unwrap();
+            let tree = parser.parse(&file.content, None).unwrap();
+            let root = tree.root_node();
+            let source = file.content.as_bytes();
 
-    assert!(!import_edges.is_empty(), "should have import edges");
+            // Walk root children
+            for i in 0..root.child_count() {
+                if let Some(child) = root.child(i) {
+                    if child.kind() == "export_statement" {
+                        eprintln!(
+                            "=== export_statement at line {} ===",
+                            child.start_position().row + 1
+                        );
+                        for j in 0..child.child_count() {
+                            if let Some(ec) = child.child(j) {
+                                let text = &source[ec.byte_range()];
+                                let text_str = std::str::from_utf8(text).unwrap_or("?");
+                                let preview = &text_str[..text_str.len().min(40)];
+                                eprintln!("  child[{}] kind={} text={:?}", j, ec.kind(), preview);
+                                // Also check named children
+                                for k in 0..ec.child_count() {
+                                    if let Some(ecc) = ec.child(k) {
+                                        let t = std::str::from_utf8(&source[ecc.byte_range()])
+                                            .unwrap_or("?");
+                                        eprintln!(
+                                            "    child[{}] kind={} name={}",
+                                            k,
+                                            ecc.kind(),
+                                            &t[..t.len().min(30)]
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

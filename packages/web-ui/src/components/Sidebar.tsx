@@ -180,6 +180,39 @@ export default function Sidebar({ node, callers, callees, nodes, onSelectNode }:
         </div>
       </div>
 
+      {/* Dead code warning banner */}
+      {node.is_dead_candidate && (
+        <div
+          className="px-3 py-2 flex-shrink-0"
+          style={{
+            background: "#ef444415",
+            borderTop: "1px solid #ef444433",
+            borderBottom: "1px solid #ef444433",
+          }}
+        >
+          <p
+            className="text-xs font-bold"
+            style={{ color: "#ef4444", fontFamily: "JetBrains Mono, monospace" }}
+          >
+            DEAD CODE CANDIDATE
+          </p>
+          {node.dead_reason && (
+            <p
+              className="text-xs mt-0.5"
+              style={{ color: "#ef444499", fontFamily: "JetBrains Mono, monospace" }}
+            >
+              reason: {node.dead_reason}
+            </p>
+          )}
+          <p
+            className="text-xs mt-1"
+            style={{ color: "#6b7280", fontFamily: "JetBrains Mono, monospace" }}
+          >
+            Nothing references this symbol. Verify before deleting.
+          </p>
+        </div>
+      )}
+
       {/* Source snippet preview */}
       {node.path && (
         <SnippetPreview

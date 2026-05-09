@@ -15,6 +15,8 @@ pub struct SkillData {
     pub hotspots: Vec<Node>,
     pub entry_points: Vec<Node>,
     pub god_nodes: Vec<Node>,
+    pub dead_code_count: u64,
+    pub dead_code_high: u64,
 }
 
 pub struct CommunityInfo {
@@ -87,6 +89,14 @@ cgx query community <id-or-name>      # explore a cluster
 cgx query dead-code                   # find unused exports
 ```
 
+## Dead Code Commands
+```bash
+cgx query dead-code --summary
+cgx query dead-code --safe-to-delete
+cgx query dead-code --kind=exports --path=src/auth/
+cgx query dead-code --kind=files
+```
+
 ## Workflow: Starting a Task
 
 1. `cgx summary`                        — orient yourself
@@ -120,6 +130,7 @@ Prefer 3 cgx queries over opening 1 file speculatively.
 - **Edges:** {{ edge_count }}
 - **Languages:** {{ language_breakdown }}
 - **Communities:** {{ community_count }}
+- **Dead code candidates:** {{ dead_code_count }} ({{ dead_code_high }} high confidence · safe to investigate)
 
 ### Top Communities
 {{ top_communities_list }}
@@ -230,6 +241,9 @@ pub fn build_skill_data(db: &GraphDb) -> anyhow::Result<SkillData> {
         .map(|&n| n.clone())
         .collect();
 
+    let dead_code_count = db.get_dead_code_stats().map(|(t, _)| t as u64).unwrap_or(0);
+    let dead_code_high = db.get_dead_code_stats().map(|(_, h)| h as u64).unwrap_or(0);
+
     Ok(SkillData {
         indexed_at: chrono::Utc::now().to_rfc3339(),
         node_count,
@@ -243,6 +257,8 @@ pub fn build_skill_data(db: &GraphDb) -> anyhow::Result<SkillData> {
         hotspots,
         entry_points,
         god_nodes: top_god_nodes,
+        dead_code_count,
+        dead_code_high,
     })
 }
 
@@ -257,6 +273,8 @@ pub fn generate_skill(data: &SkillData) -> String {
     c = c.replace("{{ edge_count }}", &data.edge_count.to_string());
     c = c.replace("{{ language_breakdown }}", &data.language_breakdown);
     c = c.replace("{{ community_count }}", &data.community_count.to_string());
+    c = c.replace("{{ dead_code_count }}", &data.dead_code_count.to_string());
+    c = c.replace("{{ dead_code_high }}", &data.dead_code_high.to_string());
 
     let communities_list = if data.top_communities.is_empty() {
         "_(none detected)_\n".to_string()

@@ -129,6 +129,7 @@ mod tests {
             community: 0,
             in_degree: 0,
             out_degree: 0,
+            ..Default::default()
         }
     }
 

@@ -16,78 +16,99 @@ fn temp_dir() -> PathBuf {
     dir
 }
 
+fn make_node(
+    id: &str,
+    kind: &str,
+    name: &str,
+    path: &str,
+    language: &str,
+    churn: f64,
+    coupling: f64,
+    community: i64,
+    in_degree: i64,
+    out_degree: i64,
+) -> Node {
+    Node {
+        id: id.to_string(),
+        kind: kind.to_string(),
+        name: name.to_string(),
+        path: path.to_string(),
+        line_start: 1,
+        line_end: 10,
+        language: language.to_string(),
+        churn,
+        coupling,
+        community,
+        in_degree,
+        out_degree,
+        exported: false,
+        is_dead_candidate: false,
+        dead_reason: None,
+    }
+}
+
 fn seed_graph(db: &GraphDb) {
     let nodes = vec![
-        Node {
-            id: "fn:src/auth.ts:login".to_string(),
-            kind: "Function".to_string(),
-            name: "login".to_string(),
-            path: "src/auth.ts".to_string(),
-            line_start: 1,
-            line_end: 5,
-            language: "typescript".to_string(),
-            churn: 0.8,
-            coupling: 0.5,
-            community: 1,
-            in_degree: 2,
-            out_degree: 1,
-        },
-        Node {
-            id: "cls:src/auth.ts:AuthService".to_string(),
-            kind: "Class".to_string(),
-            name: "AuthService".to_string(),
-            path: "src/auth.ts".to_string(),
-            line_start: 3,
-            line_end: 20,
-            language: "typescript".to_string(),
-            churn: 0.3,
-            coupling: 0.7,
-            community: 1,
-            in_degree: 1,
-            out_degree: 0,
-        },
-        Node {
-            id: "fn:src/db.ts:query".to_string(),
-            kind: "Function".to_string(),
-            name: "query".to_string(),
-            path: "src/db.ts".to_string(),
-            line_start: 1,
-            line_end: 3,
-            language: "typescript".to_string(),
-            churn: 0.0,
-            coupling: 0.2,
-            community: 2,
-            in_degree: 0,
-            out_degree: 0,
-        },
-        Node {
-            id: "file:src/auth.ts".to_string(),
-            kind: "File".to_string(),
-            name: "src/auth.ts".to_string(),
-            path: "src/auth.ts".to_string(),
-            line_start: 1,
-            line_end: 1,
-            language: "typescript".to_string(),
-            churn: 0.8,
-            coupling: 0.7,
-            community: 1,
-            in_degree: 0,
-            out_degree: 0,
-        },
-        Node {
-            id: "file:src/db.ts".to_string(),
-            kind: "File".to_string(),
-            name: "src/db.ts".to_string(),
-            path: "src/db.ts".to_string(),
-            line_start: 1,
-            line_end: 1,
-            language: "typescript".to_string(),
-            churn: 0.2,
-            coupling: 0.0,
-            community: 2,
-            in_degree: 0,
-            out_degree: 0,
-        },
+        make_node(
+            "fn:src/auth.ts:login",
+            "Function",
+            "login",
+            "src/auth.ts",
+            "typescript",
+            0.8,
+            0.5,
+            1,
+            2,
+            1,
+        ),
+        make_node(
+            "cls:src/auth.ts:AuthService",
+            "Class",
+            "AuthService",
+            "src/auth.ts",
+            "typescript",
+            0.3,
+            0.7,
+            1,
+            1,
+            0,
+        ),
+        make_node(
+            "fn:src/db.ts:query",
+            "Function",
+            "query",
+            "src/db.ts",
+            "typescript",
+            0.0,
+            0.2,
+            2,
+            0,
+            0,
+        ),
+        make_node(
+            "file:src/auth.ts",
+            "File",
+            "src/auth.ts",
+            "src/auth.ts",
+            "typescript",
+            0.8,
+            0.7,
+            1,
+            0,
+            0,
+        ),
+        make_node(
+            "file:src/db.ts",
+            "File",
+            "src/db.ts",
+            "src/db.ts",
+            "typescript",
+            0.2,
+            0.0,
+            2,
+            0,
+            0,
+        ),
     ];
 
     let edges = vec![
@@ -164,6 +185,8 @@ fn test_generate_skill_has_no_placeholders() {
         hotspots: vec![],
         entry_points: vec![],
         god_nodes: vec![],
+        dead_code_count: 0,
+        dead_code_high: 0,
     };
 
     let skill = generate_skill(&data);
@@ -226,6 +249,8 @@ fn test_generate_skill_has_stats() {
         hotspots: vec![],
         entry_points: vec![],
         god_nodes: vec![],
+        dead_code_count: 0,
+        dead_code_high: 0,
     };
 
     let skill = generate_skill(&data);
@@ -260,6 +285,8 @@ fn test_generate_agents_md_has_no_placeholders() {
         hotspots: vec![],
         entry_points: vec![],
         god_nodes: vec![],
+        dead_code_count: 0,
+        dead_code_high: 0,
     };
 
     let agents = generate_agents_md(&data);
@@ -288,20 +315,18 @@ fn test_generate_agents_md_has_no_placeholders() {
 
 #[test]
 fn test_generate_skill_hotspots_section() {
-    let hotspot = Node {
-        id: "file:src/auth.ts".to_string(),
-        kind: "File".to_string(),
-        name: "src/auth.ts".to_string(),
-        path: "src/auth.ts".to_string(),
-        line_start: 1,
-        line_end: 1,
-        language: "typescript".to_string(),
-        churn: 0.9,
-        coupling: 0.8,
-        community: 1,
-        in_degree: 5,
-        out_degree: 0,
-    };
+    let hotspot = make_node(
+        "file:src/auth.ts",
+        "File",
+        "src/auth.ts",
+        "src/auth.ts",
+        "typescript",
+        0.9,
+        0.8,
+        1,
+        5,
+        0,
+    );
 
     let data = SkillData {
         indexed_at: "2026-05-01T12:00:00Z".to_string(),
@@ -316,6 +341,8 @@ fn test_generate_skill_hotspots_section() {
         hotspots: vec![hotspot],
         entry_points: vec![],
         god_nodes: vec![],
+        dead_code_count: 0,
+        dead_code_high: 0,
     };
 
     let skill = generate_skill(&data);
@@ -332,20 +359,18 @@ fn test_generate_skill_hotspots_section() {
 
 #[test]
 fn test_generate_skill_entry_points_section() {
-    let entry = Node {
-        id: "fn:src/main.ts:main".to_string(),
-        kind: "Function".to_string(),
-        name: "main".to_string(),
-        path: "src/main.ts".to_string(),
-        line_start: 1,
-        line_end: 3,
-        language: "typescript".to_string(),
-        churn: 0.0,
-        coupling: 0.0,
-        community: 1,
-        in_degree: 0,
-        out_degree: 3,
-    };
+    let entry = make_node(
+        "fn:src/main.ts:main",
+        "Function",
+        "main",
+        "src/main.ts",
+        "typescript",
+        0.0,
+        0.0,
+        1,
+        0,
+        3,
+    );
 
     let data = SkillData {
         indexed_at: "2026-05-01T12:00:00Z".to_string(),
@@ -360,6 +385,8 @@ fn test_generate_skill_entry_points_section() {
         hotspots: vec![],
         entry_points: vec![entry],
         god_nodes: vec![],
+        dead_code_count: 0,
+        dead_code_high: 0,
     };
 
     let skill = generate_skill(&data);
@@ -372,20 +399,18 @@ fn test_generate_skill_entry_points_section() {
 
 #[test]
 fn test_generate_skill_god_nodes_section() {
-    let god = Node {
-        id: "fn:src/db.ts:query".to_string(),
-        kind: "Function".to_string(),
-        name: "query".to_string(),
-        path: "src/db.ts".to_string(),
-        line_start: 1,
-        line_end: 3,
-        language: "typescript".to_string(),
-        churn: 0.0,
-        coupling: 0.0,
-        community: 1,
-        in_degree: 10,
-        out_degree: 0,
-    };
+    let god = make_node(
+        "fn:src/db.ts:query",
+        "Function",
+        "query",
+        "src/db.ts",
+        "typescript",
+        0.0,
+        0.0,
+        1,
+        10,
+        0,
+    );
 
     let data = SkillData {
         indexed_at: "2026-05-01T12:00:00Z".to_string(),
@@ -400,6 +425,8 @@ fn test_generate_skill_god_nodes_section() {
         hotspots: vec![],
         entry_points: vec![],
         god_nodes: vec![god],
+        dead_code_count: 0,
+        dead_code_high: 0,
     };
 
     let skill = generate_skill(&data);

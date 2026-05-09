@@ -14,6 +14,9 @@ interface Props {
   onCommunityChange: (id: number | null) => void;
   nodeCount: number;
   edgeCount: number;
+  showDeadCode?: boolean;
+  onToggleDeadCode?: () => void;
+  deadCodeCount?: number;
 }
 
 const NODE_KINDS = ["Function", "Class", "File", "Module", "Variable", "Type", "Author"];
@@ -31,6 +34,9 @@ export default function FilterBar({
   onCommunityChange,
   nodeCount,
   edgeCount,
+  showDeadCode = false,
+  onToggleDeadCode,
+  deadCodeCount = 0,
 }: Props) {
   return (
     <div
@@ -130,6 +136,28 @@ export default function FilterBar({
             </button>
           );
         })}
+
+        <span className="text-xs" style={{ color: "#333350" }}>
+          |
+        </span>
+
+        {/* Dead Code toggle */}
+        {onToggleDeadCode && (
+          <button
+            onClick={onToggleDeadCode}
+            className="px-2 py-0.5 text-xs transition-opacity"
+            style={{
+              opacity: showDeadCode ? 1 : 0.4,
+              background: showDeadCode ? "#ef444422" : "transparent",
+              color: showDeadCode ? "#ef4444" : "#444466",
+              border: `1px solid ${showDeadCode ? "#ef444444" : "#1e1e2e"}`,
+              fontFamily: "JetBrains Mono, monospace",
+            }}
+            title={`Dead code overlay (${deadCodeCount} candidates)`}
+          >
+            dead-code{deadCodeCount > 0 ? ` (${deadCodeCount})` : ""}
+          </button>
+        )}
 
         {/* Community filter */}
         {communities.length > 0 && (

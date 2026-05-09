@@ -27,6 +27,9 @@ export interface GraphNode {
   community: number;
   in_degree: number;
   out_degree: number;
+  exported?: boolean;
+  is_dead_candidate?: boolean;
+  dead_reason?: string | null;
 }
 
 export type NodeKind =

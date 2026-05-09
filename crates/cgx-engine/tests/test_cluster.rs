@@ -29,6 +29,7 @@ fn make_node(id: &str, kind: &str, name: &str, path: &str) -> Node {
         community: 0,
         in_degree: 0,
         out_degree: 0,
+        ..Default::default()
     }
 }
 

@@ -180,6 +180,14 @@ impl LanguageParser for TypeScriptParser {
         // Extract CALLS edges by walking the AST with function context tracking
         extract_calls(&mut edges, root, source_bytes, file);
 
+        // Mark exported nodes based on export statements
+        let exported_names = collect_exported_names(root, source_bytes);
+        for node in &mut nodes {
+            if exported_names.contains(&node.name) {
+                node.metadata = serde_json::json!({"exported": true});
+            }
+        }
+
         // Extract JSX expression comments and annotation tags (TODO/FIXME/etc.)
         let mut comment_tags = Vec::new();
         extract_jsx_comments(&mut comment_tags, root, source_bytes, false);
@@ -189,6 +197,67 @@ impl LanguageParser for TypeScriptParser {
             edges,
             comment_tags,
         })
+    }
+}
+
+fn collect_exported_names(
+    root: tree_sitter::Node,
+    source_bytes: &[u8],
+) -> std::collections::HashSet<String> {
+    let mut exported = std::collections::HashSet::new();
+    collect_exported_names_walk(root, source_bytes, &mut exported);
+    exported
+}
+
+fn collect_exported_names_walk(
+    node: tree_sitter::Node,
+    source_bytes: &[u8],
+    exported: &mut std::collections::HashSet<String>,
+) {
+    if node.kind() == "export_statement" {
+        // Walk children to find identifiers/function names
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                match child.kind() {
+                    "function_declaration" | "class_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            exported.insert(node_text(name_node, source_bytes));
+                        }
+                    }
+                    "variable_declaration" => {
+                        // export const foo = ...
+                        for j in 0..child.child_count() {
+                            if let Some(decl) = child.child(j) {
+                                if decl.kind() == "variable_declarator" {
+                                    if let Some(name_node) = decl.child_by_field_name("name") {
+                                        exported.insert(node_text(name_node, source_bytes));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "export_clause" => {
+                        // export { foo, bar }
+                        for j in 0..child.child_count() {
+                            if let Some(spec) = child.child(j) {
+                                if spec.kind() == "export_specifier" {
+                                    if let Some(name_node) = spec.child_by_field_name("name") {
+                                        exported.insert(node_text(name_node, source_bytes));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // recurse
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            collect_exported_names_walk(child, source_bytes, exported);
+        }
     }
 }
 
@@ -463,10 +532,19 @@ fn walk_for_calls(
         }
     }
 
+    // Effective caller: innermost named function, or the file node for module-level code
+    let caller_id: Option<String> = fn_stack
+        .iter()
+        .rev()
+        .find(|s| !s.is_empty())
+        .cloned()
+        .or_else(|| Some(format!("file:{}", file.relative_path)));
+
     if kind == "call_expression" {
-        if let Some(caller_id) = fn_stack.last().filter(|s| !s.is_empty()) {
-            let callee_name = node
-                .child_by_field_name("function")
+        if let Some(ref caller) = caller_id {
+            let func_node = node.child_by_field_name("function");
+            let callee_name = func_node
+                .as_ref()
                 .and_then(|func| match func.kind() {
                     "identifier" => Some(func.utf8_text(source).unwrap_or("").to_string()),
                     "member_expression" => func
@@ -478,8 +556,55 @@ fn walk_for_calls(
 
             if !callee_name.is_empty() && callee_name != "require" {
                 edges.push(EdgeDef {
-                    src: caller_id.clone(),
+                    src: caller.clone(),
                     dst: callee_name,
+                    kind: EdgeKind::Calls,
+                    confidence: 0.7,
+                    ..Default::default()
+                });
+            }
+
+            // For `Obj.method()` also emit a CALLS edge to the object identifier so
+            // classes used only via static methods aren't flagged as dead code.
+            if let Some(func) = func_node {
+                if func.kind() == "member_expression" {
+                    if let Some(obj) = func.child_by_field_name("object") {
+                        if obj.kind() == "identifier" {
+                            let obj_name = obj.utf8_text(source).unwrap_or("").to_string();
+                            if !obj_name.is_empty() {
+                                edges.push(EdgeDef {
+                                    src: caller.clone(),
+                                    dst: obj_name,
+                                    kind: EdgeKind::Calls,
+                                    confidence: 0.6,
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // new_expression: `new ClassName(...)` — emit CALLS edge to the constructor
+    if kind == "new_expression" {
+        if let Some(ref caller) = caller_id {
+            let constructor_name = node
+                .child_by_field_name("constructor")
+                .and_then(|c| match c.kind() {
+                    "identifier" => Some(c.utf8_text(source).unwrap_or("").to_string()),
+                    "member_expression" => c
+                        .child_by_field_name("property")
+                        .map(|p| p.utf8_text(source).unwrap_or("").to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            if !constructor_name.is_empty() {
+                edges.push(EdgeDef {
+                    src: caller.clone(),
+                    dst: constructor_name,
                     kind: EdgeKind::Calls,
                     confidence: 0.7,
                     ..Default::default()
@@ -491,7 +616,7 @@ fn walk_for_calls(
     // JSX component usage: <ComponentName ... /> and <ComponentName ...>
     // Treat JSX elements as calls from the enclosing function to the component.
     if kind == "jsx_opening_element" || kind == "jsx_self_closing_element" {
-        if let Some(caller_id) = fn_stack.last().filter(|s| !s.is_empty()) {
+        if let Some(ref caller_id) = caller_id {
             let tag_name = node
                 .child_by_field_name("name")
                 .map(|n| n.utf8_text(source).unwrap_or("").to_string())

@@ -52,6 +52,19 @@ pub fn handle_tool_call(
             let sql = get_str(args, "sql")?;
             tool_run_query(db, &sql)
         }
+        "get_dead_code" => {
+            let kind = get_str_opt(args, "kind");
+            let confidence = get_str_opt(args, "confidence");
+            let path = get_str_opt(args, "path");
+            let limit = get_u32(args, "limit", 20) as usize;
+            tool_get_dead_code(
+                db,
+                kind.as_deref(),
+                confidence.as_deref(),
+                path.as_deref(),
+                limit,
+            )
+        }
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -67,7 +80,9 @@ fn tool_get_repo_summary(db: &GraphDb) -> Result<String, String> {
     let mut sorted: Vec<&cgx_engine::Node> =
         all_nodes.iter().filter(|n| n.kind != "File").collect();
     sorted.sort_by_key(|b| std::cmp::Reverse(b.in_degree));
-    let god_nodes: Vec<serde_json::Value> = sorted.iter().take(5)
+    let god_nodes: Vec<serde_json::Value> = sorted
+        .iter()
+        .take(5)
         .map(|n| serde_json::json!({"id":n.id,"name":n.name,"kind":n.kind,"in_degree":n.in_degree}))
         .collect();
 
@@ -91,19 +106,31 @@ fn tool_get_repo_summary(db: &GraphDb) -> Result<String, String> {
     // Language summary string for the plain-text header
     let mut lang_entries: Vec<_> = languages.iter().collect();
     lang_entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let lang_str = lang_entries.iter()
+    let lang_str = lang_entries
+        .iter()
         .map(|(l, p)| format!("{} {:.0}%", l, *p * 100.0))
-        .collect::<Vec<_>>().join(", ");
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let top_hotspot = hotspots.first().map(|(p, ..)| p.as_str()).unwrap_or("none");
-    let top_god = god_nodes.first()
-        .and_then(|n| n.get("name")).and_then(|v| v.as_str()).unwrap_or("none");
+    let top_god = god_nodes
+        .first()
+        .and_then(|n| n.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
 
     // Plain-text summary line — lets the model grasp the key facts before parsing JSON
     let summary = format!(
         "Repo: {} nodes, {} edges | {} | {} communities | hotspot: {} | most-used: {}",
-        node_count, edge_count, lang_str, communities.len(), top_hotspot, top_god
+        node_count,
+        edge_count,
+        lang_str,
+        communities.len(),
+        top_hotspot,
+        top_god
     );
+
+    let (dead_total, dead_high) = db.get_dead_code_stats().unwrap_or((0, 0));
 
     let data = serde_json::json!({
         "_summary": summary,
@@ -114,9 +141,82 @@ fn tool_get_repo_summary(db: &GraphDb) -> Result<String, String> {
         "top_communities": communities_json,
         "hotspots": hotspots_json,
         "god_nodes": god_nodes,
+        "dead_code_summary": {
+            "total_candidates": dead_total,
+            "high_confidence": dead_high,
+        },
     });
 
     to_compact(&data)
+}
+
+fn tool_get_dead_code(
+    db: &GraphDb,
+    kind: Option<&str>,
+    confidence: Option<&str>,
+    path_prefix: Option<&str>,
+    limit: usize,
+) -> Result<String, String> {
+    use cgx_engine::deadcode::{Confidence, DeadReason};
+
+    let report = cgx_engine::detect_dead_code(db).map_err(|e| e.to_string())?;
+
+    let all: Vec<_> = report
+        .all_items()
+        .into_iter()
+        .filter(|dn| {
+            if let Some(k) = kind {
+                let matches = match k {
+                    "exports" => dn.reason == DeadReason::UnreferencedExport,
+                    "functions" => dn.node.kind == "Function",
+                    "variables" => dn.node.kind == "Variable",
+                    "files" => dn.reason == DeadReason::ZombieFile,
+                    _ => true,
+                };
+                if !matches {
+                    return false;
+                }
+            }
+            if let Some(c) = confidence {
+                let matches = match c {
+                    "high" => dn.confidence == Confidence::High,
+                    "medium" => dn.confidence == Confidence::Medium,
+                    _ => true,
+                };
+                if !matches {
+                    return false;
+                }
+            }
+            if let Some(prefix) = path_prefix {
+                if !dn.node.path.starts_with(prefix) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    let total_count = all.len();
+    let items: Vec<_> = all
+        .iter()
+        .take(limit)
+        .map(|dn| {
+            serde_json::json!({
+                "name": dn.node.name,
+                "kind": dn.node.kind,
+                "path": dn.node.path,
+                "line_start": dn.node.line_start,
+                "confidence": dn.confidence.as_str(),
+                "reason": dn.reason.as_str(),
+                "false_positive_risk": dn.false_positive_risk,
+            })
+        })
+        .collect();
+
+    to_compact(&serde_json::json!({
+        "total_count": total_count,
+        "items": items,
+    }))
 }
 
 fn tool_find_symbol(db: &GraphDb, name: &str, kind: Option<&str>) -> Result<String, String> {
@@ -126,17 +226,21 @@ fn tool_find_symbol(db: &GraphDb, name: &str, kind: Option<&str>) -> Result<Stri
         .iter()
         .filter(|n| {
             if let Some(k) = kind {
-                if n.kind != k { return false; }
+                if n.kind != k {
+                    return false;
+                }
             }
             n.name.to_lowercase().contains(&query) || n.id.to_lowercase().contains(&query)
         })
         .take(20)
         // Return only fields useful for navigation — omit line_end, churn, community (saves ~40% per node)
-        .map(|n| serde_json::json!({
-            "id":n.id,"kind":n.kind,"name":n.name,
-            "path":n.path,"line":n.line_start,
-            "in_degree":n.in_degree,
-        }))
+        .map(|n| {
+            serde_json::json!({
+                "id":n.id,"kind":n.kind,"name":n.name,
+                "path":n.path,"line":n.line_start,
+                "in_degree":n.in_degree,
+            })
+        })
         .collect();
     let summary = format!("{} match(es) for '{}'", results.len(), name);
     to_compact(&serde_json::json!({"_summary":summary,"nodes":results}))
@@ -149,17 +253,30 @@ fn tool_get_neighbors(db: &GraphDb, node_id: &str, depth: u8) -> Result<String, 
     let all_edges = db.get_all_edges().map_err(|e| e.to_string())?;
     // Only include edges that connect TO or FROM the queried node — not edges between all
     // neighbor pairs (which causes O(n²) blowup on high-degree nodes).
-    let edges: Vec<_> = all_edges.iter()
+    let edges: Vec<_> = all_edges
+        .iter()
         .filter(|e| e.src == node_id || e.dst == node_id)
         .map(|e| serde_json::json!({"src":e.src,"dst":e.dst,"kind":e.kind}))
         .collect();
     let total = neighbors.len();
-    let nodes: Vec<_> = neighbors.iter().take(50)
+    let nodes: Vec<_> = neighbors
+        .iter()
+        .take(50)
         .map(|n| serde_json::json!({"id":n.id,"kind":n.kind,"name":n.name,"path":n.path}))
         .collect();
-    let summary = format!("{} neighbor(s) of '{}'{}", total, node_id,
-        if total > 50 { " (showing first 50)" } else { "" });
-    to_compact(&serde_json::json!({"_summary":summary,"nodes":nodes,"edges":edges,"truncated":total>50}))
+    let summary = format!(
+        "{} neighbor(s) of '{}'{}",
+        total,
+        node_id,
+        if total > 50 {
+            " (showing first 50)"
+        } else {
+            ""
+        }
+    );
+    to_compact(
+        &serde_json::json!({"_summary":summary,"nodes":nodes,"edges":edges,"truncated":total>50}),
+    )
 }
 
 fn tool_get_call_chain(db: &GraphDb, from: &str, to: &str) -> Result<String, String> {
@@ -209,7 +326,12 @@ fn tool_get_call_chain(db: &GraphDb, from: &str, to: &str) -> Result<String, Str
                         }));
                     }
                 }
-                let summary = format!("Path found: {} → {} ({} hops)", from, to, path_json.len() - 1);
+                let summary = format!(
+                    "Path found: {} → {} ({} hops)",
+                    from,
+                    to,
+                    path_json.len() - 1
+                );
                 return to_compact(&serde_json::json!({
                     "_summary": summary, "found": true, "path": path_json, "edges": path_edges,
                 }));
@@ -223,9 +345,13 @@ fn tool_get_call_chain(db: &GraphDb, from: &str, to: &str) -> Result<String, Str
                 }
             }
         }
-        to_compact(&serde_json::json!({"_summary":"No path found","found":false,"path":[],"edges":[]}))
+        to_compact(
+            &serde_json::json!({"_summary":"No path found","found":false,"path":[],"edges":[]}),
+        )
     } else {
-        to_compact(&serde_json::json!({"_summary":"Could not resolve one or both symbols","found":false,"path":[],"edges":[]}))
+        to_compact(
+            &serde_json::json!({"_summary":"Could not resolve one or both symbols","found":false,"path":[],"edges":[]}),
+        )
     }
 }
 
@@ -234,14 +360,21 @@ fn tool_get_blast_radius(db: &GraphDb, node_id: &str) -> Result<String, String> 
     let resolved = resolve_node_id(&all, node_id).unwrap_or_else(|| node_id.to_string());
     let neighbors = db.get_dependents(&resolved, 3).map_err(|e| e.to_string())?;
     let affected_count = neighbors.len() as u32;
-    let risk = if affected_count > 50 { "CRITICAL" }
-               else if affected_count > 20 { "HIGH" }
-               else if affected_count > 5 { "MEDIUM" }
-               else { "LOW" };
+    let risk = if affected_count > 50 {
+        "CRITICAL"
+    } else if affected_count > 20 {
+        "HIGH"
+    } else if affected_count > 5 {
+        "MEDIUM"
+    } else {
+        "LOW"
+    };
 
     // Cap the node list to 30; for larger blast radii return a sample + breakdown by kind.
     // This avoids returning 500-node lists (each ~80 chars) for god nodes.
-    let sample: Vec<_> = neighbors.iter().take(30)
+    let sample: Vec<_> = neighbors
+        .iter()
+        .take(30)
         .map(|n| serde_json::json!({"id":n.id,"name":n.name,"kind":n.kind,"path":n.path}))
         .collect();
 
@@ -250,7 +383,10 @@ fn tool_get_blast_radius(db: &GraphDb, node_id: &str) -> Result<String, String> 
         *by_kind.entry(n.kind.as_str()).or_default() += 1;
     }
 
-    let summary = format!("{} affected ({}) — changing '{}' breaks these", affected_count, risk, node_id);
+    let summary = format!(
+        "{} affected ({}) — changing '{}' breaks these",
+        affected_count, risk, node_id
+    );
     to_compact(&serde_json::json!({
         "_summary": summary,
         "affected_count": affected_count,
@@ -282,14 +418,22 @@ fn tool_get_community(db: &GraphDb, community_id: i64) -> Result<String, String>
             })
         })
         .collect();
-    let summary = format!("Community '{}': {} nodes, {} edges", label, nodes_json.len(), edges.len());
-    to_compact(&serde_json::json!({"_summary":summary,"nodes":nodes_json,"label":label,"edge_count":edges.len()}))
+    let summary = format!(
+        "Community '{}': {} nodes, {} edges",
+        label,
+        nodes_json.len(),
+        edges.len()
+    );
+    to_compact(
+        &serde_json::json!({"_summary":summary,"nodes":nodes_json,"label":label,"edge_count":edges.len()}),
+    )
 }
 
 fn tool_search_graph(db: &GraphDb, query: &str, limit: u32) -> Result<String, String> {
     let all = db.get_all_nodes().map_err(|e| e.to_string())?;
     let q = query.to_lowercase();
-    let results: Vec<_> = all.iter()
+    let results: Vec<_> = all
+        .iter()
         .filter(|n| n.name.to_lowercase().contains(&q) || n.path.to_lowercase().contains(&q))
         .take(limit as usize)
         .map(|n| serde_json::json!({"id":n.id,"kind":n.kind,"name":n.name,"path":n.path}))
@@ -318,7 +462,11 @@ fn tool_get_hotspots(db: &GraphDb, top_n: usize) -> Result<String, String> {
             })
         })
         .collect();
-    let top = results.first().and_then(|r| r.get("path")).and_then(|v| v.as_str()).unwrap_or("none");
+    let top = results
+        .first()
+        .and_then(|r| r.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
     let summary = format!("{} hotspot(s); riskiest: {}", results.len(), top);
     to_compact(&serde_json::json!({"_summary":summary,"hotspots":results}))
 }
@@ -354,8 +502,17 @@ fn tool_get_file_owners(db: &GraphDb, file_path: &str) -> Result<String, String>
             }))
         })
         .collect();
-    let top_owner = owners.first().and_then(|o| o.get("name")).and_then(|v| v.as_str()).unwrap_or("unknown");
-    let summary = format!("{} owner(s) for '{}'; primary: {}", owners.len(), file_path, top_owner);
+    let top_owner = owners
+        .first()
+        .and_then(|o| o.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let summary = format!(
+        "{} owner(s) for '{}'; primary: {}",
+        owners.len(),
+        file_path,
+        top_owner
+    );
     to_compact(&serde_json::json!({"_summary":summary,"owners":owners}))
 }
 

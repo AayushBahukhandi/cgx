@@ -31,6 +31,7 @@ fn seed_graph(db: &GraphDb) {
             community: 1,
             in_degree: 2,
             out_degree: 1,
+            ..Default::default()
         },
         Node {
             id: "cls:src/auth.ts:AuthService".to_string(),
@@ -45,6 +46,7 @@ fn seed_graph(db: &GraphDb) {
             community: 1,
             in_degree: 1,
             out_degree: 0,
+            ..Default::default()
         },
         Node {
             id: "fn:src/db.ts:query".to_string(),
@@ -59,6 +61,7 @@ fn seed_graph(db: &GraphDb) {
             community: 2,
             in_degree: 0,
             out_degree: 0,
+            ..Default::default()
         },
         Node {
             id: "file:src/auth.ts".to_string(),
@@ -73,6 +76,7 @@ fn seed_graph(db: &GraphDb) {
             community: 1,
             in_degree: 0,
             out_degree: 0,
+            ..Default::default()
         },
         Node {
             id: "file:src/db.ts".to_string(),
@@ -87,6 +91,7 @@ fn seed_graph(db: &GraphDb) {
             community: 2,
             in_degree: 0,
             out_degree: 0,
+            ..Default::default()
         },
     ];
 

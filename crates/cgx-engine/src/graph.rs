@@ -26,6 +26,12 @@ pub struct Node {
     pub in_degree: i64,
     #[serde(default)]
     pub out_degree: i64,
+    #[serde(default)]
+    pub exported: bool,
+    #[serde(default)]
+    pub is_dead_candidate: bool,
+    #[serde(default)]
+    pub dead_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,8 +75,35 @@ pub struct TagRow {
     pub comment_type: String,
 }
 
+impl Default for Node {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: String::new(),
+            name: String::new(),
+            path: String::new(),
+            line_start: 0,
+            line_end: 0,
+            language: String::new(),
+            churn: 0.0,
+            coupling: 0.0,
+            community: 0,
+            in_degree: 0,
+            out_degree: 0,
+            exported: false,
+            is_dead_candidate: false,
+            dead_reason: None,
+        }
+    }
+}
+
 impl Node {
     pub fn from_def(d: &NodeDef, language: &str) -> Self {
+        let exported = d
+            .metadata
+            .get("exported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         Self {
             id: d.id.clone(),
             kind: d.kind.as_str().to_string(),
@@ -84,6 +117,9 @@ impl Node {
             community: 0,
             in_degree: 0,
             out_degree: 0,
+            exported,
+            is_dead_candidate: false,
+            dead_reason: None,
         }
     }
 }
@@ -122,19 +158,22 @@ impl GraphDb {
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS nodes (
-                id         VARCHAR PRIMARY KEY,
-                kind       VARCHAR NOT NULL,
-                name       VARCHAR NOT NULL,
-                path       VARCHAR NOT NULL,
-                line_start INTEGER,
-                line_end   INTEGER,
-                language   VARCHAR,
-                churn      DOUBLE DEFAULT 0.0,
-                coupling   DOUBLE DEFAULT 0.0,
-                community  BIGINT DEFAULT 0,
-                in_degree  BIGINT DEFAULT 0,
-                out_degree BIGINT DEFAULT 0,
-                metadata   JSON
+                id                 VARCHAR PRIMARY KEY,
+                kind               VARCHAR NOT NULL,
+                name               VARCHAR NOT NULL,
+                path               VARCHAR NOT NULL,
+                line_start         INTEGER,
+                line_end           INTEGER,
+                language           VARCHAR,
+                churn              DOUBLE DEFAULT 0.0,
+                coupling           DOUBLE DEFAULT 0.0,
+                community          BIGINT DEFAULT 0,
+                in_degree          BIGINT DEFAULT 0,
+                out_degree         BIGINT DEFAULT 0,
+                exported           TINYINT DEFAULT 0,
+                is_dead_candidate  TINYINT DEFAULT 0,
+                dead_reason        TEXT,
+                metadata           JSON
             );
             CREATE TABLE IF NOT EXISTS edges (
                 id         VARCHAR PRIMARY KEY,
@@ -178,6 +217,16 @@ impl GraphDb {
             CREATE INDEX IF NOT EXISTS idx_tags_type       ON tags(tag_type);",
         )?;
 
+        // Migration: add new columns to existing DBs that pre-date this schema.
+        // DuckDB 1.x supports "ADD COLUMN IF NOT EXISTS" which is a no-op when
+        // the column is already present — no error, no transaction abort.
+        conn.execute_batch(
+            "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS exported           TINYINT DEFAULT 0;
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_dead_candidate  TINYINT DEFAULT 0;
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS dead_reason        TEXT;
+             CREATE INDEX IF NOT EXISTS idx_nodes_dead ON nodes(is_dead_candidate);",
+        )?;
+
         Ok(Self {
             conn,
             repo_id,
@@ -191,8 +240,8 @@ impl GraphDb {
         }
         let mut count = 0;
         let mut stmt = self.conn.prepare(
-            "INSERT OR REPLACE INTO nodes (id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO nodes (id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, exported)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )?;
         for node in nodes {
             stmt.execute(params![
@@ -208,6 +257,7 @@ impl GraphDb {
                 node.community,
                 node.in_degree,
                 node.out_degree,
+                node.exported as i32,
             ])?;
             count += 1;
         }
@@ -341,7 +391,7 @@ impl GraphDb {
     pub fn get_node(&self, id: &str) -> anyhow::Result<Option<Node>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree FROM nodes WHERE id = ?")?;
+            .prepare("SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false) as exported, COALESCE(is_dead_candidate, false) as is_dead_candidate, dead_reason FROM nodes WHERE id = ?")?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(Node {
                 id: row.get(0)?,
@@ -356,6 +406,9 @@ impl GraphDb {
                 community: row.get(9)?,
                 in_degree: row.get(10)?,
                 out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
             })
         })?;
 
@@ -380,7 +433,7 @@ impl GraphDb {
 
             for cur_id in &current {
                 let mut stmt = self.conn.prepare(
-                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree
+                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree, COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false), n.dead_reason
                      FROM nodes n
                      INNER JOIN edges e ON (e.dst = n.id AND e.src = ?1) OR (e.src = n.id AND e.dst = ?2)
                      LIMIT 100",
@@ -399,6 +452,9 @@ impl GraphDb {
                         community: row.get(9)?,
                         in_degree: row.get(10)?,
                         out_degree: row.get(11)?,
+                        exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                        is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                        dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
                     })
                 })?;
 
@@ -418,7 +474,7 @@ impl GraphDb {
 
     pub fn get_all_nodes(&self) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree FROM nodes",
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason FROM nodes",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(Node {
@@ -434,6 +490,9 @@ impl GraphDb {
                 community: row.get(9)?,
                 in_degree: row.get(10)?,
                 out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
             })
         })?;
 
@@ -481,48 +540,12 @@ impl GraphDb {
     }
 
     pub fn clear(&self) -> anyhow::Result<()> {
-        // Drop and recreate tables instead of DELETE to avoid DuckDB ART index
-        // bulk-delete failures on large datasets (duckdb issue with indexed tables).
+        // TRUNCATE avoids DuckDB ART index bulk-delete failures on large datasets
+        // and is more reliable than DROP+CREATE for data persistence across connections.
         self.conn.execute_batch(
-            "DROP TABLE IF EXISTS edges;
-             DROP TABLE IF EXISTS nodes;
-             DROP TABLE IF EXISTS communities;
-             CREATE TABLE IF NOT EXISTS nodes (
-                 id         VARCHAR PRIMARY KEY,
-                 kind       VARCHAR NOT NULL,
-                 name       VARCHAR NOT NULL,
-                 path       VARCHAR NOT NULL,
-                 line_start INTEGER,
-                 line_end   INTEGER,
-                 language   VARCHAR,
-                 churn      DOUBLE DEFAULT 0.0,
-                 coupling   DOUBLE DEFAULT 0.0,
-                 community  BIGINT DEFAULT 0,
-                 in_degree  BIGINT DEFAULT 0,
-                 out_degree BIGINT DEFAULT 0,
-                 metadata   JSON
-             );
-             CREATE TABLE IF NOT EXISTS edges (
-                 id         VARCHAR PRIMARY KEY,
-                 src        VARCHAR NOT NULL,
-                 dst        VARCHAR NOT NULL,
-                 kind       VARCHAR NOT NULL,
-                 weight     DOUBLE DEFAULT 1.0,
-                 confidence DOUBLE DEFAULT 1.0,
-                 metadata   JSON
-             );
-             CREATE TABLE IF NOT EXISTS communities (
-                 id         INTEGER PRIMARY KEY,
-                 label      VARCHAR,
-                 node_count INTEGER,
-                 top_nodes  JSON
-             );
-             CREATE INDEX IF NOT EXISTS idx_nodes_kind      ON nodes(kind);
-             CREATE INDEX IF NOT EXISTS idx_nodes_path      ON nodes(path);
-             CREATE INDEX IF NOT EXISTS idx_nodes_community ON nodes(community);
-             CREATE INDEX IF NOT EXISTS idx_edges_src       ON edges(src);
-             CREATE INDEX IF NOT EXISTS idx_edges_dst       ON edges(dst);
-             CREATE INDEX IF NOT EXISTS idx_edges_kind      ON edges(kind);",
+            "TRUNCATE TABLE edges;
+             TRUNCATE TABLE nodes;
+             TRUNCATE TABLE communities;",
         )?;
         Ok(())
     }
@@ -687,7 +710,7 @@ impl GraphDb {
 
     pub fn get_entry_points(&self, limit: usize) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason
              FROM nodes
              WHERE in_degree = 0 AND kind != 'File' AND kind != 'Author'
              ORDER BY out_degree DESC
@@ -707,6 +730,9 @@ impl GraphDb {
                 community: row.get(9)?,
                 in_degree: row.get(10)?,
                 out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
             })
         })?;
         let mut results = Vec::new();
@@ -718,7 +744,7 @@ impl GraphDb {
 
     pub fn get_god_nodes(&self, limit: usize) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason
              FROM nodes
              WHERE in_degree > 0 AND kind != 'File' AND kind != 'Author'
              ORDER BY in_degree DESC
@@ -738,6 +764,9 @@ impl GraphDb {
                 community: row.get(9)?,
                 in_degree: row.get(10)?,
                 out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
             })
         })?;
         let mut results = Vec::new();
@@ -818,7 +847,7 @@ impl GraphDb {
             let mut next = Vec::new();
             for cur_id in &current {
                 let mut stmt = self.conn.prepare(
-                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree
+                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree, COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false), n.dead_reason
                      FROM nodes n
                      INNER JOIN edges e ON e.src = n.id AND e.dst = ?
                      LIMIT 100",
@@ -837,6 +866,9 @@ impl GraphDb {
                         community: row.get(9)?,
                         in_degree: row.get(10)?,
                         out_degree: row.get(11)?,
+                        exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                        is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                        dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
                     })
                 })?;
                 for row in rows {
@@ -855,7 +887,7 @@ impl GraphDb {
 
     pub fn get_nodes_by_community(&self, community: i64) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree FROM nodes WHERE community = ?",
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason FROM nodes WHERE community = ?",
         )?;
         let rows = stmt.query_map(params![community], |row| {
             Ok(Node {
@@ -871,6 +903,9 @@ impl GraphDb {
                 community: row.get(9)?,
                 in_degree: row.get(10)?,
                 out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
             })
         })?;
         let mut nodes = Vec::new();
@@ -878,6 +913,37 @@ impl GraphDb {
             nodes.push(row?);
         }
         Ok(nodes)
+    }
+
+    pub fn mark_dead_candidates(&self, items: &[(String, String)]) -> anyhow::Result<()> {
+        // items = vec of (node_id, dead_reason)
+        if items.is_empty() {
+            return Ok(());
+        }
+        let mut stmt = self
+            .conn
+            .prepare("UPDATE nodes SET is_dead_candidate = 1, dead_reason = ? WHERE id = ?")?;
+        for (id, reason) in items {
+            stmt.execute(params![reason, id])?;
+        }
+        Ok(())
+    }
+
+    pub fn get_dead_code_stats(&self) -> anyhow::Result<(i64, i64)> {
+        // Returns (total_candidates, high_confidence_count)
+        let total: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE is_dead_candidate = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        // High confidence = unreachable or disconnected reasons
+        let high: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE is_dead_candidate = 1 AND dead_reason IN ('unreachable', 'disconnected')", [], |r| r.get(0)
+        ).unwrap_or(0);
+        Ok((total, high))
     }
 
     pub fn get_edges_by_community(&self, community: i64) -> anyhow::Result<Vec<Edge>> {

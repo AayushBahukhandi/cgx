@@ -13,6 +13,7 @@ interface Props {
   visibleEdges: Set<string>;
   searchQuery: string;
   communityFilter: number | null;
+  showDeadCode?: boolean;
 }
 
 export default function GraphCanvas({
@@ -23,6 +24,7 @@ export default function GraphCanvas({
   visibleEdges,
   searchQuery,
   communityFilter,
+  showDeadCode = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
@@ -34,12 +36,14 @@ export default function GraphCanvas({
   const searchQueryRef = useRef(searchQuery);
   const communityFilterRef = useRef(communityFilter);
   const dataRef = useRef(data);
+  const showDeadCodeRef = useRef(showDeadCode);
 
   visibleKindsRef.current = visibleKinds;
   visibleEdgesRef.current = visibleEdges;
   searchQueryRef.current = searchQuery;
   communityFilterRef.current = communityFilter;
   dataRef.current = data;
+  showDeadCodeRef.current = showDeadCode;
 
   const computeVisibleNodeIds = useCallback((): Set<string> => {
     const ids = new Set<string>();
@@ -66,10 +70,19 @@ export default function GraphCanvas({
     if (!graph || !sigma) return;
 
     const desired = computeVisibleNodeIds();
+    const deadOverlay = showDeadCodeRef.current;
 
-    graph.forEachNode((node) => {
+    graph.forEachNode((node, attrs) => {
       try {
         graph.setNodeAttribute(node, "hidden", !desired.has(node));
+        // Update color based on dead code overlay state
+        const isDeadCandidate = attrs.isDeadCandidate as boolean | undefined;
+        if (deadOverlay && isDeadCandidate) {
+          graph.setNodeAttribute(node, "color", "#ef4444");
+        } else {
+          const kind = attrs.kind as string;
+          graph.setNodeAttribute(node, "color", NODE_COLORS[kind] || "#888888");
+        }
       } catch {}
     });
 
@@ -97,7 +110,11 @@ export default function GraphCanvas({
 
     const maxChurn = Math.max(...d.nodes.map((n) => n.churn), 0.01);
     for (const node of d.nodes) {
-      const color = NODE_COLORS[node.kind] || "#888888";
+      // Dead code overlay: highlight dead candidates in red when overlay is active
+      const isDeadCandidate = node.is_dead_candidate === true;
+      const color = (showDeadCode && isDeadCandidate)
+        ? "#ef4444"
+        : NODE_COLORS[node.kind] || "#888888";
       const size = 4 + (node.churn / maxChurn) * 14;
       g.addNode(node.id, {
         label: node.name,
@@ -115,6 +132,8 @@ export default function GraphCanvas({
         path: node.path,
         lineStart: node.line_start,
         lineEnd: node.line_end,
+        isDeadCandidate: node.is_dead_candidate ?? false,
+        deadReason: node.dead_reason ?? null,
       });
     }
 
@@ -218,7 +237,7 @@ export default function GraphCanvas({
   // Update visibility when filters change
   useEffect(() => {
     applyVisibility();
-  }, [visibleKinds, visibleEdges, searchQuery, communityFilter, applyVisibility]);
+  }, [visibleKinds, visibleEdges, searchQuery, communityFilter, showDeadCode, applyVisibility]);
 
   // Highlight selected node
   useEffect(() => {

@@ -217,11 +217,66 @@ impl LanguageParser for RustParser {
             }
         }
 
+        // Mark pub items as exported
+        mark_pub_exported(&mut nodes, root, source_bytes);
+
         Ok(ParseResult {
             nodes,
             edges,
             ..Default::default()
         })
+    }
+}
+
+fn is_pub_item(node: tree_sitter::Node, source_bytes: &[u8]) -> bool {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "visibility_modifier" {
+                let text = node_text(child, source_bytes);
+                if text == "pub" || text.starts_with("pub(") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn mark_pub_exported(
+    nodes: &mut Vec<crate::parser::NodeDef>,
+    root: tree_sitter::Node,
+    source_bytes: &[u8],
+) {
+    walk_pub(nodes, root, source_bytes);
+}
+
+fn walk_pub(nodes: &mut Vec<crate::parser::NodeDef>, node: tree_sitter::Node, source_bytes: &[u8]) {
+    let kind = node.kind();
+    if matches!(
+        kind,
+        "function_item" | "struct_item" | "enum_item" | "trait_item" | "type_item"
+    ) && is_pub_item(node, source_bytes)
+    {
+        // Get the name of this item
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let item_name = node_text(name_node, source_bytes);
+            // Mark the matching node as exported
+            for n in nodes.iter_mut() {
+                if n.name == item_name {
+                    n.metadata = serde_json::json!({"exported": true});
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_pub(nodes, cursor.node(), source_bytes);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
     }
 }
 

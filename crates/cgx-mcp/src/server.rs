@@ -300,6 +300,20 @@ fn tools_list() -> serde_json::Value {
                     },
                     "required": ["sql"]
                 }
+            },
+            {
+                "name": "get_dead_code",
+                "description": "Find unused exports, unreachable functions, and dead code candidates.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string", "description": "Filter: exports, functions, variables, files, or all" },
+                        "confidence": { "type": "string", "description": "Filter: high, medium, or all" },
+                        "path": { "type": "string", "description": "Scope to folder prefix (e.g. src/auth/)" },
+                        "limit": { "type": "integer", "description": "Max results (default 20)" }
+                    },
+                    "required": []
+                }
             }
         ]
     })

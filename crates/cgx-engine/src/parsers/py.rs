@@ -184,6 +184,13 @@ impl LanguageParser for PythonParser {
             }
         }
 
+        // In Python, top-level functions/classes not starting with _ are considered exported
+        for node_def in &mut nodes {
+            if !node_def.name.starts_with('_') {
+                node_def.metadata = serde_json::json!({"exported": true});
+            }
+        }
+
         Ok(ParseResult {
             nodes,
             edges,

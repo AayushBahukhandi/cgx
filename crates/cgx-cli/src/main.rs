@@ -297,10 +297,24 @@ enum QueryCmd {
         #[arg(long)]
         repo: Option<PathBuf>,
     },
-    /// Find unreferenced exports
+    /// Find unreferenced exports and dead code
     DeadCode {
         #[arg(long)]
         repo: Option<PathBuf>,
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        #[arg(long, value_name = "LEVEL")]
+        confidence: Option<String>,
+        #[arg(long, value_name = "N")]
+        community: Option<i64>,
+        #[arg(long, value_name = "PREFIX")]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        summary: bool,
+        #[arg(long)]
+        safe_to_delete: bool,
     },
 }
 
@@ -408,7 +422,25 @@ fn main() -> anyhow::Result<()> {
             QueryCmd::Owners { path, repo } => cmd_query_owners(path, repo),
             QueryCmd::Search { query, limit, repo } => cmd_query_search(query, limit, repo),
             QueryCmd::Community { id, repo } => cmd_query_community(id, repo),
-            QueryCmd::DeadCode { repo } => cmd_query_dead_code(repo),
+            QueryCmd::DeadCode {
+                repo,
+                kind,
+                confidence,
+                community,
+                path,
+                json,
+                summary,
+                safe_to_delete,
+            } => cmd_query_dead_code(
+                repo,
+                kind,
+                confidence,
+                community,
+                path,
+                json,
+                summary,
+                safe_to_delete,
+            ),
         },
         Commands::Export {
             format,
@@ -813,6 +845,9 @@ fn cmd_analyze(
                                 community: 0,
                                 in_degree: 0,
                                 out_degree: 0,
+                                exported: false,
+                                is_dead_candidate: false,
+                                dead_reason: None,
                             });
                             seen_authors.insert(email.clone(), name.clone());
                         }
@@ -903,6 +938,23 @@ fn cmd_analyze(
         }
     };
 
+    // Step 6.25: Dead code scan
+    let dead_report = cgx_engine::detect_dead_code(&db);
+    if let Ok(ref report) = dead_report {
+        let _ = cgx_engine::mark_dead_candidates(&db, report);
+        if !quiet {
+            let total = report.total();
+            let (high, _medium, _low) = report.count_by_confidence();
+            if total > 0 {
+                println!(
+                    "  \u{25C6} Dead code scan...          {} candidates ({} high confidence)",
+                    total, high
+                );
+                println!("    Run cgx query dead-code to see details");
+            }
+        }
+    }
+
     // Step 6.5: Store file hashes for incremental indexing
     use sha2::{Digest, Sha256};
     for file in &files {
@@ -946,6 +998,9 @@ fn cmd_analyze(
     } else {
         cgx_engine::install_git_hooks(&canonical).unwrap_or((false, false))
     };
+
+    // drop db connection before opening fresh connection
+    drop(db);
 
     if !quiet {
         println!("  \u{2713} Done");
@@ -3223,21 +3278,264 @@ fn cmd_query_community(id: i64, repo: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_query_dead_code(repo: Option<PathBuf>) -> anyhow::Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn cmd_query_dead_code(
+    repo: Option<PathBuf>,
+    kind_filter: Option<String>,
+    confidence_filter: Option<String>,
+    community_filter: Option<i64>,
+    path_filter: Option<String>,
+    as_json: bool,
+    summary_only: bool,
+    safe_to_delete: bool,
+) -> anyhow::Result<()> {
+    use cgx_engine::deadcode::{Confidence, DeadNode, DeadReason};
+
     let db = GraphDb::open(&resolve_repo(repo))?;
-    let all = db.get_all_nodes()?;
-    let dead: Vec<_> = all
-        .iter()
-        .filter(|n| n.in_degree == 0 && n.kind != "File" && n.kind != "Author")
-        .collect();
-    if dead.is_empty() {
-        println!("No dead code detected.");
+    let report = cgx_engine::detect_dead_code(&db)?;
+
+    let confidence_filter = if safe_to_delete {
+        Some("high".to_string())
     } else {
-        println!("  Potentially unused symbols (nothing references them):");
-        for n in dead.iter().take(30) {
-            println!("    {}  {:<20}  {}", n.kind, n.name, n.path);
-        }
+        confidence_filter
+    };
+
+    fn filter_items<'a>(
+        items: &'a [DeadNode],
+        kind_filter: Option<&str>,
+        confidence_filter: Option<&str>,
+        community_filter: Option<i64>,
+        path_filter: Option<&str>,
+    ) -> Vec<&'a DeadNode> {
+        items
+            .iter()
+            .filter(|dn| {
+                if let Some(k) = kind_filter {
+                    let matches = match k {
+                        "exports" => dn.reason == DeadReason::UnreferencedExport,
+                        "functions" => dn.node.kind == "Function",
+                        "variables" => dn.node.kind == "Variable",
+                        "files" => dn.reason == DeadReason::ZombieFile,
+                        "disconnected" => dn.reason == DeadReason::Disconnected,
+                        _ => true,
+                    };
+                    if !matches {
+                        return false;
+                    }
+                }
+                if let Some(c) = confidence_filter {
+                    let matches = match c {
+                        "high" => dn.confidence == Confidence::High,
+                        "medium" => dn.confidence == Confidence::Medium,
+                        "low" => dn.confidence == Confidence::Low,
+                        _ => true,
+                    };
+                    if !matches {
+                        return false;
+                    }
+                }
+                if let Some(comm) = community_filter {
+                    if dn.node.community != comm {
+                        return false;
+                    }
+                }
+                if let Some(prefix) = path_filter {
+                    if !dn.node.path.starts_with(prefix) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
     }
+
+    let kf = kind_filter.as_deref();
+    let cf = confidence_filter.as_deref();
+
+    let filtered_exports = filter_items(
+        &report.unreferenced_exports,
+        kf,
+        cf,
+        community_filter,
+        path_filter.as_deref(),
+    );
+    let filtered_unreachable = filter_items(
+        &report.unreachable,
+        kf,
+        cf,
+        community_filter,
+        path_filter.as_deref(),
+    );
+    let filtered_vars = filter_items(
+        &report.unused_variables,
+        kf,
+        cf,
+        community_filter,
+        path_filter.as_deref(),
+    );
+    let filtered_disconnected = filter_items(
+        &report.disconnected,
+        kf,
+        cf,
+        community_filter,
+        path_filter.as_deref(),
+    );
+    let filtered_zombies = filter_items(
+        &report.zombie_files,
+        kf,
+        cf,
+        community_filter,
+        path_filter.as_deref(),
+    );
+
+    let total = filtered_exports.len()
+        + filtered_unreachable.len()
+        + filtered_vars.len()
+        + filtered_disconnected.len()
+        + filtered_zombies.len();
+
+    let (high, medium, low) = {
+        let all_filtered: Vec<&DeadNode> = filtered_exports
+            .iter()
+            .chain(filtered_unreachable.iter())
+            .chain(filtered_vars.iter())
+            .chain(filtered_disconnected.iter())
+            .chain(filtered_zombies.iter())
+            .copied()
+            .collect();
+        let h = all_filtered
+            .iter()
+            .filter(|dn| dn.confidence == Confidence::High)
+            .count();
+        let m = all_filtered
+            .iter()
+            .filter(|dn| dn.confidence == Confidence::Medium)
+            .count();
+        let l = all_filtered
+            .iter()
+            .filter(|dn| dn.confidence == Confidence::Low)
+            .count();
+        (h, m, l)
+    };
+
+    if as_json {
+        let to_json = |items: &[&DeadNode]| -> serde_json::Value {
+            serde_json::Value::Array(
+                items
+                    .iter()
+                    .map(|dn| {
+                        serde_json::json!({
+                            "id": dn.node.id,
+                            "name": dn.node.name,
+                            "kind": dn.node.kind,
+                            "path": dn.node.path,
+                            "line_start": dn.node.line_start,
+                            "confidence": dn.confidence.as_str(),
+                            "false_positive_risk": dn.false_positive_risk,
+                            "churn": dn.node.churn,
+                        })
+                    })
+                    .collect(),
+            )
+        };
+        let output = serde_json::json!({
+            "summary": {"total": total, "high": high, "medium": medium, "low": low},
+            "unreferenced_exports": to_json(&filtered_exports),
+            "unreachable": to_json(&filtered_unreachable),
+            "unused_variables": to_json(&filtered_vars),
+            "zombie_files": to_json(&filtered_zombies),
+            "disconnected": to_json(&filtered_disconnected),
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    if summary_only {
+        println!(
+            "  {:<30} {:>6}  {:>6}  {:>8}  {:>5}",
+            "Category", "Count", "High", "Medium", "Low"
+        );
+        println!("  {}", "-".repeat(65));
+        let rows: &[(&str, &[&DeadNode])] = &[
+            ("Unreferenced exports", &filtered_exports),
+            ("Unreachable functions", &filtered_unreachable),
+            ("Unused variables", &filtered_vars),
+            ("Disconnected nodes", &filtered_disconnected),
+            ("Zombie files", &filtered_zombies),
+        ];
+        for (label, items) in rows {
+            let h = items
+                .iter()
+                .filter(|dn| dn.confidence == Confidence::High)
+                .count();
+            let m = items
+                .iter()
+                .filter(|dn| dn.confidence == Confidence::Medium)
+                .count();
+            let l = items
+                .iter()
+                .filter(|dn| dn.confidence == Confidence::Low)
+                .count();
+            println!(
+                "  {:<30} {:>6}  {:>6}  {:>8}  {:>5}",
+                label,
+                items.len(),
+                h,
+                m,
+                l
+            );
+        }
+        println!("  {}", "-".repeat(65));
+        println!(
+            "  {:<30} {:>6}  {:>6}  {:>8}  {:>5}",
+            "Total", total, high, medium, low
+        );
+        return Ok(());
+    }
+
+    if total == 0 {
+        println!("  No dead code detected.");
+        return Ok(());
+    }
+
+    println!(
+        "  Dead code candidates: {} total ({} high, {} medium, {} low confidence)",
+        total, high, medium, low
+    );
+    println!();
+
+    fn print_section(label: &str, items: &[&DeadNode]) {
+        if items.is_empty() {
+            return;
+        }
+        println!(
+            "  \u{2500}\u{2500} {} ({}) \u{2500}\u{2500}",
+            label,
+            items.len()
+        );
+        for dn in items {
+            let conf_char = match dn.confidence {
+                Confidence::High => "H",
+                Confidence::Medium => "M",
+                Confidence::Low => "L",
+            };
+            println!(
+                "    [{}] {}  {:<25}  {}:{}",
+                conf_char, dn.node.kind, dn.node.name, dn.node.path, dn.node.line_start
+            );
+            if let Some(ref fp) = dn.false_positive_risk {
+                println!("        \u{26A0} {}", fp);
+            }
+        }
+        println!();
+    }
+
+    print_section("Unreferenced Exports", &filtered_exports);
+    print_section("Unreachable Functions", &filtered_unreachable);
+    print_section("Unused Variables", &filtered_vars);
+    print_section("Disconnected Nodes", &filtered_disconnected);
+    print_section("Zombie Files", &filtered_zombies);
+
     Ok(())
 }
 

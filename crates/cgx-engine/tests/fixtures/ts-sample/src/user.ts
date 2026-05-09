@@ -13,3 +13,5 @@ export class UserService {
 export function hashPassword(password: string): string {
   return Buffer.from(password).toString('base64');
 }
+function _neverCalledPrivate(): void { console.log("dead"); }
+export function unusedExportedHelper(x: number): number { return x * 2; }

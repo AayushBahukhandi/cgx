@@ -1,5 +1,6 @@
 pub mod cluster;
 pub mod config;
+pub mod deadcode;
 pub mod diff;
 pub mod export;
 pub mod git;
@@ -15,6 +16,9 @@ pub use cluster::{detect_communities, run_clustering};
 pub use config::{
     AnalyzeConfig, CgxConfig, ChatConfig, ExportConfig, IndexConfig, McpConfig, ProjectConfig,
     ServeConfig, SkillConfig, WatchConfig,
+};
+pub use deadcode::{
+    detect_dead_code, mark_dead_candidates, Confidence, DeadCodeReport, DeadNode, DeadReason,
 };
 pub use diff::{
     compute_impact, diff_graphs, snapshot_at_commit, GraphDiff, GraphSnapshot, ImpactReport,
@@ -291,6 +295,9 @@ pub fn analyze_repo_incremental(
                 community: 0,
                 in_degree: 0,
                 out_degree: 0,
+                exported: false,
+                is_dead_candidate: false,
+                dead_reason: None,
             });
             for (file_path, _email, _percent) in files.iter().take(5) {
                 own_edges.push(crate::graph::Edge {
