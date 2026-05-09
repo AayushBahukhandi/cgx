@@ -70,7 +70,7 @@ cgx hotspots
 | **Share Links** | `cgx share` uploads your graph to a Gist — anyone views it in a browser, no install needed |
 | **GitHub Pages Publish** | `cgx publish` pushes a self-contained graph site to your `gh-pages` branch |
 | **Graph Diff** | See how your architecture changed between commits |
-| **Dead Code Detection** | Find unreferenced exports across the whole codebase |
+| **Dead Code Detection** | Five categories: unreferenced exports, unreachable private functions, unused variables, disconnected nodes, zombie files — with High/Medium/Low confidence and false-positive hints |
 | **Self-contained binary** | Web UI is embedded in the binary — Homebrew and `cargo install` work out of the box |
 
 ---
@@ -147,7 +147,7 @@ cgx update --auto   # detect your install method and upgrade automatically
 
 Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 
-> **On v0.1.8 or older?** Run `cgx update --auto` or reinstall. v0.1.9 fixes a significant issue where build artifacts (`web-ui-dist/`, `*.min.js`, etc.) were included in the graph, producing garbage god nodes and wrong language stats. Re-run `cgx analyze --force` after upgrading to get a clean index.
+> **On v0.1.9 or older?** Run `cgx update --auto` or reinstall. v0.2.0 adds dead code detection (`cgx query dead-code`) and fixes cross-file call tracking — `new ClassName()`, static method calls, and module-level function calls now all create proper edges, eliminating the majority of false positives. Re-run `cgx analyze --force` after upgrading to refresh the graph.
 
 ---
 
@@ -234,7 +234,10 @@ cgx query find "AuthService"            # locate any symbol
 cgx query find "login" --kind=Function  # filter by kind
 cgx query blast-radius "deleteUser"     # what breaks if this changes?
 cgx query chain "Router.handleLogin"    # trace a call chain
-cgx query dead-code                     # unreferenced exports
+cgx query dead-code                     # unreferenced exports, unreachable functions, zombie files
+cgx query dead-code --kind=exports      # filter: exports | functions | variables | files | disconnected
+cgx query dead-code --confidence=high   # only high-confidence candidates
+cgx query dead-code --summary           # count table by category and confidence
 cgx query search "session management"  # full-text search
 cgx query owners src/payments/          # git blame ownership
 ```
@@ -314,6 +317,7 @@ Restart your editor. cgx now exposes 10 typed tools your AI can call directly:
 | `search_graph` | Full-text search over all symbol names | ~200 |
 | `get_hotspots` | Highest churn × coupling files | ~200 |
 | `get_file_owners` | Git blame ownership for any file | ~100 |
+| `get_dead_code` | Unreferenced exports, unreachable functions, zombie files — with confidence + false-positive hints | ~500 |
 | `run_query` | Raw SQL SELECT against the graph (read-only) | varies |
 
 Every response includes a `_summary` field — a plain-text sentence the model
