@@ -740,19 +740,11 @@ fn count_complexity(node: tree_sitter::Node, source: &[u8], nesting: u32) -> f64
 
 /// Look for a doc comment (/** */ or ///) just before the function line.
 /// Searches up to 3 lines before fn_line for a comment node ending near that line.
-fn extract_doc_comment(
-    root: tree_sitter::Node,
-    source: &[u8],
-    fn_line: u32,
-) -> Option<String> {
+fn extract_doc_comment(root: tree_sitter::Node, source: &[u8], fn_line: u32) -> Option<String> {
     find_doc_comment(root, source, fn_line)
 }
 
-fn find_doc_comment(
-    node: tree_sitter::Node,
-    source: &[u8],
-    fn_line: u32,
-) -> Option<String> {
+fn find_doc_comment(node: tree_sitter::Node, source: &[u8], fn_line: u32) -> Option<String> {
     if node.kind() == "comment" {
         let end_line = node.end_position().row as u32 + 1;
         // Comment should end at or just before the function line (within 3 lines)

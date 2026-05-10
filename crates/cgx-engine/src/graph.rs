@@ -1199,9 +1199,7 @@ impl GraphDb {
     }
 
     /// Returns (overall_pct, Vec<(community_id, documented, total)>, Vec<undocumented high-coupling nodes>)
-    pub fn get_docs_coverage(
-        &self,
-    ) -> anyhow::Result<DocsCoverage> {
+    pub fn get_docs_coverage(&self) -> anyhow::Result<DocsCoverage> {
         let overall: f64 = self
             .conn
             .query_row(
@@ -1318,10 +1316,7 @@ impl GraphDb {
         };
 
         let rows = if use_kind {
-            stmt.query_map(
-                params![min_similarity, kind_filter.unwrap_or("")],
-                map_row,
-            )?
+            stmt.query_map(params![min_similarity, kind_filter.unwrap_or("")], map_row)?
         } else {
             stmt.query_map(params![min_similarity], map_row)?
         };

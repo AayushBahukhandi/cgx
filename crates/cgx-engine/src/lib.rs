@@ -24,29 +24,29 @@ pub use config::{
 pub use deadcode::{
     detect_dead_code, mark_dead_candidates, Confidence, DeadCodeReport, DeadNode, DeadReason,
 };
-pub use dupes::{detect_clones, CloneKind, ClonePair};
+pub use deps::{audit_dependencies, parse_manifests, DependencyReport};
 pub use diff::{
     compute_impact, diff_graphs, snapshot_at_commit, GraphDiff, GraphSnapshot, ImpactReport,
 };
+pub use dupes::{detect_clones, CloneKind, ClonePair};
 pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
 pub use git::{analyze_repo, GitAnalysis};
-pub use deps::{audit_dependencies, parse_manifests, DependencyReport};
-pub use rules::{run_rules, Rule, RuleResult, RulesConfig, RuleViolation};
 pub use graph::{
     CloneRow, CommunityRow, DocsCoverage, Edge, GraphDb, Node, RepoStats, SnapshotEntry, TagRow,
     TestCoverageSummary,
 };
-pub use timeline::build_timeline;
 pub use parser::{
     CommentKind, CommentTag, EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult,
     ParserRegistry,
 };
 pub use registry::{Registry, RepoEntry};
 pub use resolver::{is_test_path, resolve};
+pub use rules::{run_rules, Rule, RuleResult, RuleViolation, RulesConfig};
 pub use skill::{
     build_skill_data, generate_agents_md, generate_skill, install_git_hooks, write_agents_md,
     write_skill, CommunityInfo, SkillData,
 };
+pub use timeline::build_timeline;
 pub use walker::{walk_repo, Language, SourceFile};
 
 use sha2::{Digest, Sha256};
@@ -378,10 +378,8 @@ pub fn analyze_repo_incremental(
         .filter(|n| crate::resolver::is_test_path(&n.path))
         .map(|n| n.path.clone())
         .collect();
-    let all_test_paths: std::collections::HashSet<String> = test_file_paths
-        .into_iter()
-        .chain(test_node_paths)
-        .collect();
+    let all_test_paths: std::collections::HashSet<String> =
+        test_file_paths.into_iter().chain(test_node_paths).collect();
     db.mark_test_files(&all_test_paths.into_iter().collect::<Vec<_>>())?;
     db.update_test_coverage()?;
 
