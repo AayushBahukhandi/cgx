@@ -57,7 +57,7 @@ cgx hotspots
 | **AST Parsing** | Tree-sitter parses TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP in parallel |
 | **JSX Caller Tracking** | React component usages (`<MyComp />`) are tracked as call edges |
 | **JSX Comment Extraction** | `{/* TODO */}` expression comments and commented-out JSX code are extracted and tagged separately from code comments |
-| **Annotation Index** | `cgx todos` lists all TODO/FIXME/HACK/NOTE tags with `comment_type` (code vs jsx) |
+| **Annotation Index** | `cgx todos` lists all TODO/FIXME/HACK/NOTE/BUG/OPTIMIZE/WARN/XXX tags with `comment_type` (code vs jsx) |
 | **Docs Coverage** | `cgx docs coverage` reports what % of exported functions have doc comments, by community |
 | **Complexity Scoring** | `cgx complexity` ranks functions by cognitive complexity score (if/for/switch/ternary nesting) |
 | **Test Coverage Overlay** | `cgx test coverage` / `cgx test gaps` maps test files → source functions via TESTS edges |
@@ -91,6 +91,8 @@ cgx hotspots
 ```bash
 brew install aayushbahukhandi/cgx/cgx
 ```
+
+> Tap: [AayushBahukhandi/homebrew-cgx](https://github.com/AayushBahukhandi/homebrew-cgx)
 
 To update:
 
@@ -156,6 +158,8 @@ cgx update --auto   # detect your install method and upgrade automatically
 
 Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 
+> **On v0.3.0?** Run `cgx update --auto` or reinstall. v0.3.1 fixes `cgx complexity --combined` (now uses file-level churn), adds `cgx test coverage --by=community`, improves `cgx todos` empty-result messages, shows available built-in rules in `cgx rules list`, and adds a stale-index warning to `cgx complexity`. Also adds previously undocumented commands: `cgx impact`, `cgx init`, `cgx list`, `cgx query deps`, `cgx query community`.
+>
 > **On v0.2.x?** Run `cgx update --auto` or reinstall. v0.3.0 adds `cgx todos`, `cgx docs coverage`, `cgx complexity`, `cgx test coverage/gaps`, `cgx deps health`, `cgx review`, `cgx rules check`, `cgx dupes`, `cgx explain`, and `cgx timeline` — a full suite of advanced code intelligence commands. Re-run `cgx analyze --force` after upgrading to refresh the graph with new columns (complexity, doc_comment, is_tested, test_count).
 >
 > **On v0.1.9 or older?** Run `cgx update --auto` or reinstall. v0.2.0 added dead code detection (`cgx query dead-code`) and fixed cross-file call tracking — `new ClassName()`, static method calls, and module-level function calls now all create proper edges, eliminating the majority of false positives.
@@ -202,6 +206,9 @@ cgx analyze --watch                # live-reload on file save
 cgx analyze --incremental          # re-parse only changed files (used by git hooks)
 cgx analyze --no-git               # skip git history layer
 cgx analyze --force                # full clean re-index
+cgx analyze --verbose              # verbose output during analysis
+cgx analyze --no-cluster           # skip community detection
+cgx analyze --quiet                # suppress output
 ```
 
 ### Visualize
@@ -243,14 +250,16 @@ cgx publish --badge            # print README badge markdown
 ```bash
 cgx query find "AuthService"            # locate any symbol
 cgx query find "login" --kind=Function  # filter by kind
+cgx query deps "AppError"               # dependencies of a node
 cgx query blast-radius "deleteUser"     # what breaks if this changes?
-cgx query chain "Router.handleLogin"    # trace a call chain
+cgx query chain "login -> AppError"     # trace a call chain (format: "from -> to")
+cgx query community 7                   # all nodes in community #7
 cgx query dead-code                     # unreferenced exports, unreachable functions, zombie files
 cgx query dead-code --kind=exports      # filter: exports | functions | variables | files | disconnected
 cgx query dead-code --confidence=high   # only high-confidence candidates
 cgx query dead-code --summary           # count table by category and confidence
-cgx query search "session management"  # full-text search
-cgx query owners src/payments/          # git blame ownership
+cgx query search "session"             # search by symbol name
+cgx query owners src/payments/index.ts  # git blame ownership for a file
 ```
 
 ### Git Intelligence
@@ -259,15 +268,19 @@ cgx query owners src/payments/          # git blame ownership
 cgx hotspots                   # high churn × high coupling = danger zone
 cgx blame-graph                # ownership by contributor
 cgx diff HEAD~5                # architecture diff between commits
+cgx impact                     # downstream impact of changes in the last 7 days
+cgx impact --since=14          # look back N days
 ```
 
 ### Documentation & Annotations
 
 ```bash
-cgx todos                          # list all TODO/FIXME/HACK/NOTE tags
-cgx todos --kind=FIXME             # filter by tag kind
-cgx todos --comment-type=jsx       # only JSX {/* */} comments
-cgx docs coverage                  # % of exported functions with doc comments
+cgx todos                                    # list all TODO/FIXME/HACK/NOTE tags
+cgx todos --kind=FIXME                       # filter by tag kind
+cgx todos --comment-type=jsx                 # only JSX {/* */} comments
+cgx todos --comment-type=jsx_commented_code  # JSX code blocks that are commented out
+cgx todos --json                             # output as JSON
+cgx docs coverage                            # % of exported functions with doc comments
 ```
 
 ### Complexity
@@ -359,6 +372,7 @@ cgx explain --onboard --out=ARCHITECTURE.md  # write to file
 cgx timeline                       # snapshot last 20 commits
 cgx timeline --commits=50          # last N commits
 cgx timeline --since=2024-01       # since a date
+cgx timeline --json                # output as JSON
 ```
 
 ### Export
@@ -377,6 +391,9 @@ cgx doctor                     # run diagnostics on your install
 cgx clean                      # remove indexed data for current repo
 cgx clean --all                # remove ALL indexed repos
 cgx status                     # show index status for registered repos
+cgx init                       # create .cgx/config.toml with defaults
+cgx init --yes                 # non-interactive with defaults
+cgx list                       # list all indexed repos with node/edge counts
 ```
 
 ---
@@ -476,6 +493,11 @@ export CGX_CHAT_BASE_URL=https://api.together.ai/v1
 export CGX_CHAT_API_KEY=your-key
 export CGX_CHAT_MODEL=meta-llama/Llama-3-70b-chat-hf
 cgx serve
+```
+
+```bash
+cgx serve                              # start server (auto-opens browser)
+cgx serve --no-open                    # start server without opening browser
 ```
 
 > **Privacy note:** cgx chat sends only graph metadata to the AI — node names,
@@ -658,8 +680,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## Roadmap
 
+**v0.3.1 — Bug Fixes & Documentation (shipped)**
+- [x] `cgx complexity --combined` — fixed: now correctly uses file-level churn (not always-zero function churn)
+- [x] `cgx test coverage --by=community` — implemented: community-level test coverage breakdown table
+- [x] `cgx todos` empty-result messages — fixed: "No FIXME annotation comments found." instead of "Run cgx analyze"
+- [x] `cgx complexity` stale warning — warns when all scores are 0.00 and suggests `--force` re-index
+- [x] `cgx rules list` — now shows all 4 available built-in rules even without a `.cgx/rules.toml`
+- [x] `cgx query chain` format — README corrected to `"A -> B"` format
+- [x] `cgx query search` — clarified as symbol-name search (not full-text code search)
+- [x] `cgx impact`, `cgx init`, `cgx list`, `cgx query deps`, `cgx query community` — documented in README
+
 **v0.3.0 — Advanced Code Intelligence (shipped)**
-- [x] `cgx todos` — annotation index (TODO/FIXME/HACK/NOTE, JSX comments)
+- [x] `cgx todos` — annotation index (TODO/FIXME/HACK/NOTE/BUG/OPTIMIZE/WARN/XXX, JSX comments)
 - [x] `cgx docs coverage` — documentation coverage by community
 - [x] `cgx complexity` — cognitive complexity scoring per function
 - [x] `cgx test coverage` / `cgx test gaps` — test coverage overlay via TESTS edges
@@ -676,7 +708,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 - [ ] `cgx watch` with debounced incremental indexing
 - [ ] Mermaid diagram auto-commit to docs/ on every push (GitHub Action)
 - [ ] Ruby, Swift, C/C++ parsers
-- [ ] `cgx init` — guided first-run experience
 - [ ] Semantic code search (`cgx query search --semantic` with optional LLM summaries)
 - [ ] cgx cloud — shared graphs for teams (hosted)
 

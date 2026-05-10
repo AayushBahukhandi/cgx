@@ -248,6 +248,10 @@ enum Commands {
         /// Minimum complexity score (0.0-1.0)
         #[arg(long)]
         threshold: Option<f64>,
+
+        /// Sort by complexity × churn (combined risk score)
+        #[arg(long)]
+        combined: bool,
     },
     /// Find duplicate or cloned functions
     Dupes {
@@ -483,6 +487,10 @@ enum TestCmd {
         /// Path to the repository
         #[arg(long)]
         repo: Option<PathBuf>,
+
+        /// Group results by field (e.g. "community")
+        #[arg(long)]
+        by: Option<String>,
     },
     /// Show untested high-coupling functions ranked by risk
     Gaps {
@@ -686,9 +694,10 @@ fn main() -> anyhow::Result<()> {
             repo,
             top,
             threshold,
+            combined,
         } => {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
-            cmd_complexity(&repo_path, top, threshold)
+            cmd_complexity(&repo_path, top, threshold, combined)
         }
         Commands::Dupes {
             repo,
@@ -747,9 +756,9 @@ fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Test { cmd } => match cmd {
-            TestCmd::Coverage { repo } => {
+            TestCmd::Coverage { repo, by } => {
                 let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
-                cmd_test_coverage(&repo_path)
+                cmd_test_coverage(&repo_path, by.as_deref())
             }
             TestCmd::Gaps { repo } => {
                 let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
@@ -3909,15 +3918,22 @@ fn cmd_docs_coverage(repo_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_complexity(repo_path: &Path, top: usize, threshold: Option<f64>) -> anyhow::Result<()> {
+fn cmd_complexity(
+    repo_path: &Path,
+    top: usize,
+    threshold: Option<f64>,
+    combined: bool,
+) -> anyhow::Result<()> {
     let canonical = repo_path
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
 
     let min_score = threshold.unwrap_or(0.0);
+    // When using combined mode, fetch a larger pool so we can re-sort by combined score
+    let fetch_limit = if combined { top * 5 } else { top };
     let nodes = db
-        .get_nodes_by_complexity(top, min_score)
+        .get_nodes_by_complexity(fetch_limit.max(top), min_score)
         .context("Failed to query complexity")?;
 
     if nodes.is_empty() {
@@ -3928,25 +3944,76 @@ fn cmd_complexity(repo_path: &Path, top: usize, threshold: Option<f64>) -> anyho
         return Ok(());
     }
 
-    println!();
-    println!(
-        "  COMPLEXITY HOTSPOTS \u{2014} top {} functions",
-        nodes.len()
-    );
-    println!("  {}", "\u{2500}".repeat(70));
-    println!(
-        "  {:<3}  {:<28}  {:<30}  {:>8}",
-        "#", "Function", "File", "Score"
-    );
-
-    for (i, node) in nodes.iter().enumerate() {
+    // Bug 4: warn when all scores are zero (stale index)
+    if threshold.is_none() && nodes.iter().all(|n| n.complexity == 0.0) {
         println!(
-            "  {:<3}  {:<28}  {:<30}  {:>7.3}",
-            i + 1,
-            truncate_path(&node.name, 28),
-            truncate_path(&node.path, 30),
-            node.complexity
+            "  \u{26a0} All scores are 0.00 \u{2014} run `cgx analyze --force` to compute complexity."
         );
+    }
+
+    if combined {
+        // Churn lives on File nodes, not Function nodes. Build a path→churn map via
+        // a single query joining all File nodes, then multiply complexity × file_churn.
+        let file_churn_map: std::collections::HashMap<String, f64> = {
+            let mut stmt = db
+                .conn
+                .prepare("SELECT path, COALESCE(churn, 0.0) FROM nodes WHERE kind = 'File'")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        let mut scored: Vec<(f64, &cgx_engine::Node)> = nodes
+            .iter()
+            .map(|n| {
+                let file_churn = file_churn_map.get(&n.path).copied().unwrap_or(0.0);
+                (n.complexity * file_churn, n)
+            })
+            .collect();
+        scored.sort_by(|(a, _), (b, _)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top);
+
+        println!();
+        println!(
+            "  COMPLEXITY HOTSPOTS \u{2014} top {} functions (combined risk: complexity \u{00d7} file churn)",
+            scored.len()
+        );
+        println!("  {}", "\u{2500}".repeat(80));
+        println!(
+            "  {:<3}  {:<28}  {:<30}  {:>11}",
+            "#", "Function", "File", "CombinedRisk"
+        );
+
+        for (i, (combined_score, node)) in scored.iter().enumerate() {
+            println!(
+                "  {:<3}  {:<28}  {:<30}  {:>11.3}",
+                i + 1,
+                truncate_path(&node.name, 28),
+                truncate_path(&node.path, 30),
+                combined_score
+            );
+        }
+    } else {
+        println!();
+        println!(
+            "  COMPLEXITY HOTSPOTS \u{2014} top {} functions",
+            nodes.len().min(top)
+        );
+        println!("  {}", "\u{2500}".repeat(70));
+        println!(
+            "  {:<3}  {:<28}  {:<30}  {:>8}",
+            "#", "Function", "File", "Score"
+        );
+
+        for (i, node) in nodes.iter().take(top).enumerate() {
+            println!(
+                "  {:<3}  {:<28}  {:<30}  {:>7.3}",
+                i + 1,
+                truncate_path(&node.name, 28),
+                truncate_path(&node.path, 30),
+                node.complexity
+            );
+        }
     }
 
     println!();
@@ -4030,7 +4097,12 @@ fn cmd_todos(
     }
 
     if tags.is_empty() {
-        println!("  No annotation comments found. Run `cgx analyze` to index the codebase.");
+        if tag_filter.is_some() || kind_filter.is_some() {
+            let what = tag_filter.or(kind_filter).unwrap_or("annotation");
+            println!("  No {} annotation comments found.", what);
+        } else {
+            println!("  No annotation comments found. Run `cgx analyze` to index the codebase.");
+        }
         return Ok(());
     }
 
@@ -4059,12 +4131,12 @@ fn cmd_todos(
 
 // ── Test Coverage ────────────────────────────────────────────────────────
 
-fn cmd_test_coverage(repo_path: &Path) -> anyhow::Result<()> {
+fn cmd_test_coverage(repo_path: &Path, by: Option<&str>) -> anyhow::Result<()> {
     let db = GraphDb::open(&resolve_repo(Some(repo_path.to_path_buf())))?;
     let (pct, tested, untested, _gaps) = db.get_test_coverage_summary(0)?;
 
     println!("  TEST COVERAGE");
-    println!("  {}", "─".repeat(60));
+    println!("  {}", "\u{2500}".repeat(60));
     println!(
         "  Overall: {:.1}% of functions/classes have test coverage",
         pct
@@ -4084,6 +4156,46 @@ fn cmd_test_coverage(repo_path: &Path) -> anyhow::Result<()> {
         println!("  and run `cgx analyze --force` to detect test coverage.");
     } else {
         println!("  TESTS edges: {}", tests_edge_count);
+    }
+
+    if by.map(|b| b == "community").unwrap_or(false) {
+        println!();
+        println!("  COVERAGE BY COMMUNITY");
+        println!("  {}", "\u{2500}".repeat(60));
+        println!(
+            "  {:<12}  {:>7}  {:>8}  {:>8}  {:>6}",
+            "Community", "Total", "Tested", "Untested", "Pct"
+        );
+        println!("  {}", "\u{2500}".repeat(60));
+
+        let mut stmt = db.conn.prepare(
+            "SELECT community, COUNT(*) as total, SUM(CASE WHEN is_tested THEN 1 ELSE 0 END) as tested \
+             FROM nodes WHERE kind = 'Function' GROUP BY community ORDER BY total DESC LIMIT 20",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let community: Option<i64> = row.get(0)?;
+            let total: i64 = row.get(1)?;
+            let tested: i64 = row.get(2)?;
+            Ok((community, total, tested))
+        })?;
+
+        for row in rows {
+            let (community, total, tested) = row?;
+            let untested = total - tested;
+            let pct = if total > 0 {
+                (tested as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            let community_label = community
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            println!(
+                "  {:<12}  {:>7}  {:>8}  {:>8}  {:>5.1}%",
+                community_label, total, tested, untested, pct
+            );
+        }
+        println!();
     }
 
     Ok(())
@@ -4617,7 +4729,32 @@ fn cmd_rules_list(repo_path: &Path) -> anyhow::Result<()> {
     let config = cgx_engine::RulesConfig::load(&canonical)?;
 
     if config.rules.is_empty() {
-        println!("  No rules defined. Create .cgx/rules.toml to add rules.");
+        println!("  No user rules defined. Create .cgx/rules.toml to add custom rules.");
+        println!();
+        println!("  AVAILABLE BUILT-IN RULES");
+        println!("  {}", "\u{2500}".repeat(54));
+        println!(
+            "  [built-in]  {:<26}  \u{2014} Detect circular dependencies between modules",
+            "no_cycles"
+        );
+        println!(
+            "  [built-in]  {:<26}  \u{2014} Flag nodes with in-degree above threshold (default 50)",
+            "max_coupling"
+        );
+        println!(
+            "  [built-in]  {:<26}  \u{2014} Flag functions with complexity above threshold (default 0.7)",
+            "max_complexity"
+        );
+        println!(
+            "  [built-in]  {:<26}  \u{2014} Require doc comments on exported functions",
+            "require_docs_for_public"
+        );
+        println!();
+        println!("  Example .cgx/rules.toml:");
+        println!("  [[rules]]");
+        println!("  name = \"no-circular-deps\"");
+        println!("  built_in = \"no_cycles\"");
+        println!("  severity = \"error\"");
         return Ok(());
     }
 
@@ -6109,13 +6246,14 @@ fn parse_version_parts(version: &str) -> Vec<u64> {
 fn print_update_notice(current: &str, latest: &str) {
     eprintln!();
     eprintln!(
-        "  Update available: {} -> {}",
+        "  Update available: {} → {}",
         current,
         latest.trim_start_matches('v')
     );
-    eprintln!("  Run brew upgrade aayushbahukhandi/cgx/cgx or cargo install cgx-cli to update.");
-    eprintln!("  See full release notes:");
-    eprintln!("  https://github.com/AayushBahukhandi/cgx/releases/latest");
+    eprintln!("  Run `cgx update --auto` to upgrade automatically, or:");
+    eprintln!("    brew upgrade aayushbahukhandi/cgx/cgx");
+    eprintln!("    cargo install cgx-cli");
+    eprintln!("  Release notes: https://github.com/AayushBahukhandi/cgx/releases/latest");
     eprintln!();
 }
 
