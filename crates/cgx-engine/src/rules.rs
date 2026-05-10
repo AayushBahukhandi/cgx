@@ -98,9 +98,10 @@ fn run_builtin_rule(db: &crate::graph::GraphDb, rule: &Rule, builtin: &str) -> R
 
 fn run_no_cycles(db: &crate::graph::GraphDb, rule: &Rule) -> RuleResult {
     // Detect cycles using DFS on IMPORTS edges
-    let mut stmt = match db.conn.prepare(
-        "SELECT DISTINCT src, dst FROM edges WHERE kind = 'IMPORTS' AND src != dst",
-    ) {
+    let mut stmt = match db
+        .conn
+        .prepare("SELECT DISTINCT src, dst FROM edges WHERE kind = 'IMPORTS' AND src != dst")
+    {
         Ok(s) => s,
         Err(e) => {
             return RuleResult {
@@ -111,7 +112,9 @@ fn run_no_cycles(db: &crate::graph::GraphDb, rule: &Rule) -> RuleResult {
         }
     };
 
-    let mapped = match stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))) {
+    let mapped = match stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }) {
         Ok(m) => m,
         Err(_) => {
             return RuleResult {
@@ -124,8 +127,7 @@ fn run_no_cycles(db: &crate::graph::GraphDb, rule: &Rule) -> RuleResult {
     let edges: Vec<(String, String)> = mapped.filter_map(|r| r.ok()).collect();
 
     // Build adjacency list
-    let mut adj: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for (src, dst) in &edges {
         adj.entry(src.clone()).or_default().push(dst.clone());
     }

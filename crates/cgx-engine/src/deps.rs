@@ -189,9 +189,15 @@ fn parse_pyproject_toml(content: &str) -> Vec<Dependency> {
 
 fn parse_pep508(spec: &str) -> (String, String) {
     if let Some(pos) = spec.find(">=") {
-        (spec[..pos].trim().to_string(), spec[pos + 2..].trim().to_string())
+        (
+            spec[..pos].trim().to_string(),
+            spec[pos + 2..].trim().to_string(),
+        )
     } else if let Some(pos) = spec.find("==") {
-        (spec[..pos].trim().to_string(), spec[pos + 2..].trim().to_string())
+        (
+            spec[..pos].trim().to_string(),
+            spec[pos + 2..].trim().to_string(),
+        )
     } else {
         (spec.trim().to_string(), "*".to_string())
     }
@@ -296,7 +302,9 @@ pub fn query_osv(deps: &[Dependency]) -> Vec<DependencyReport> {
                         .map(|v| {
                             v.iter()
                                 .filter_map(|vuln| {
-                                    vuln.get("id").and_then(|id| id.as_str()).map(|s| s.to_string())
+                                    vuln.get("id")
+                                        .and_then(|id| id.as_str())
+                                        .map(|s| s.to_string())
                                 })
                                 .collect()
                         })

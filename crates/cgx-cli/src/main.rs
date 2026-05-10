@@ -706,7 +706,13 @@ fn main() -> anyhow::Result<()> {
             out,
         } => {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
-            cmd_explain(&repo_path, target.as_deref(), community, onboard, out.as_deref())
+            cmd_explain(
+                &repo_path,
+                target.as_deref(),
+                community,
+                onboard,
+                out.as_deref(),
+            )
         }
         Commands::Rules { cmd } => match cmd {
             RulesCmd::Check { repo, rule, format } => {
@@ -3859,7 +3865,10 @@ fn cmd_docs_coverage(repo_path: &Path) -> anyhow::Result<()> {
     println!();
     println!("  DOCUMENTATION COVERAGE");
     println!("  {}", "\u{2500}".repeat(60));
-    println!("  Overall: {:.1}% of exported functions/classes documented", overall_pct);
+    println!(
+        "  Overall: {:.1}% of exported functions/classes documented",
+        overall_pct
+    );
     println!();
 
     if !by_community.is_empty() {
@@ -3884,10 +3893,7 @@ fn cmd_docs_coverage(repo_path: &Path) -> anyhow::Result<()> {
 
     if !undocumented.is_empty() {
         println!("  UNDOCUMENTED HIGH-COUPLING FUNCTIONS (top by callers)");
-        println!(
-            "  {:<30}  {:<35}  {:>7}",
-            "Function", "File", "Callers"
-        );
+        println!("  {:<30}  {:<35}  {:>7}", "Function", "File", "Callers");
         println!("  {}", "\u{2500}".repeat(76));
         for node in &undocumented {
             println!(
@@ -3903,11 +3909,7 @@ fn cmd_docs_coverage(repo_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_complexity(
-    repo_path: &Path,
-    top: usize,
-    threshold: Option<f64>,
-) -> anyhow::Result<()> {
+fn cmd_complexity(repo_path: &Path, top: usize, threshold: Option<f64>) -> anyhow::Result<()> {
     let canonical = repo_path
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
@@ -3919,12 +3921,18 @@ fn cmd_complexity(
         .context("Failed to query complexity")?;
 
     if nodes.is_empty() {
-        println!("  No functions found with complexity >= {:.2}. Run `cgx analyze` first.", min_score);
+        println!(
+            "  No functions found with complexity >= {:.2}. Run `cgx analyze` first.",
+            min_score
+        );
         return Ok(());
     }
 
     println!();
-    println!("  COMPLEXITY HOTSPOTS \u{2014} top {} functions", nodes.len());
+    println!(
+        "  COMPLEXITY HOTSPOTS \u{2014} top {} functions",
+        nodes.len()
+    );
     println!("  {}", "\u{2500}".repeat(70));
     println!(
         "  {:<3}  {:<28}  {:<30}  {:>8}",
@@ -3945,19 +3953,15 @@ fn cmd_complexity(
     Ok(())
 }
 
-fn cmd_dupes(
-    repo_path: &Path,
-    threshold: f64,
-    kind_filter: Option<&str>,
-) -> anyhow::Result<()> {
+fn cmd_dupes(repo_path: &Path, threshold: f64, kind_filter: Option<&str>) -> anyhow::Result<()> {
     let canonical = repo_path
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
     let db = GraphDb::open(&canonical)?;
 
     let all_nodes = db.get_all_nodes().context("Failed to load nodes")?;
-    let pairs = detect_clones(&all_nodes, &canonical, threshold)
-        .context("Failed to detect clones")?;
+    let pairs =
+        detect_clones(&all_nodes, &canonical, threshold).context("Failed to detect clones")?;
 
     // Filter by kind if requested
     let filtered: Vec<&ClonePair> = pairs
@@ -3972,7 +3976,10 @@ fn cmd_dupes(
         .collect();
 
     if filtered.is_empty() {
-        println!("  No duplicate functions found with threshold {:.2}.", threshold);
+        println!(
+            "  No duplicate functions found with threshold {:.2}.",
+            threshold
+        );
         return Ok(());
     }
 
@@ -4112,11 +4119,7 @@ fn cmd_test_gaps(repo_path: &Path) -> anyhow::Result<()> {
         };
         println!(
             "  {:<30}  {:<30}  {:>7}  {:>5.2}  {}",
-            node.name,
-            node.path,
-            node.in_degree,
-            node.churn,
-            risk_label
+            node.name, node.path, node.in_degree, node.churn, risk_label
         );
     }
     println!();
@@ -4184,8 +4187,7 @@ fn cmd_explain(
         generate_community_doc(&db, comm_id)?
     } else if let Some(target_str) = target {
         // Try as symbol name first, then as folder path
-        generate_symbol_doc(&db, target_str)
-            .or_else(|_| generate_folder_doc(&db, target_str))?
+        generate_symbol_doc(&db, target_str).or_else(|_| generate_folder_doc(&db, target_str))?
     } else {
         generate_onboard_doc(&db)?
     };
@@ -4220,10 +4222,7 @@ fn generate_symbol_doc(db: &GraphDb, symbol: &str) -> anyhow::Result<String> {
 
     // Get tags for this file
     let tags = db.get_tags(None, None)?;
-    let file_tags: Vec<_> = tags
-        .iter()
-        .filter(|t| t.file_path == node.path)
-        .collect();
+    let file_tags: Vec<_> = tags.iter().filter(|t| t.file_path == node.path).collect();
 
     let mut out = String::new();
     out.push_str(&format!("## {}\n\n", node.name));
@@ -4237,7 +4236,10 @@ fn generate_symbol_doc(db: &GraphDb, symbol: &str) -> anyhow::Result<String> {
     ));
 
     if !callers.is_empty() {
-        out.push_str(&format!("**What depends on it ({} callers):**\n", callers.len()));
+        out.push_str(&format!(
+            "**What depends on it ({} callers):**\n",
+            callers.len()
+        ));
         for caller in callers.iter().take(10) {
             if let Some(caller_node) = nodes.iter().find(|n| n.id == caller.src) {
                 out.push_str(&format!(
@@ -4250,7 +4252,10 @@ fn generate_symbol_doc(db: &GraphDb, symbol: &str) -> anyhow::Result<String> {
     }
 
     if !callees.is_empty() {
-        out.push_str(&format!("**What it depends on ({} dependencies):**\n", callees.len()));
+        out.push_str(&format!(
+            "**What it depends on ({} dependencies):**\n",
+            callees.len()
+        ));
         for callee in callees.iter().take(10) {
             if let Some(callee_node) = nodes.iter().find(|n| n.id == callee.dst) {
                 out.push_str(&format!(
@@ -4311,14 +4316,13 @@ fn generate_folder_doc(db: &GraphDb, folder_path: &str) -> anyhow::Result<String
     }
 
     // Top 3 hotspots
-    let mut hotspots: Vec<_> = folder_nodes
-        .iter()
-        .filter(|n| n.churn > 0.0)
-        .collect();
+    let mut hotspots: Vec<_> = folder_nodes.iter().filter(|n| n.churn > 0.0).collect();
     hotspots.sort_by(|a, b| {
         let score_a = a.churn * a.coupling;
         let score_b = b.churn * b.coupling;
-        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        score_b
+            .partial_cmp(&score_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     if !hotspots.is_empty() {
         out.push_str("**Top 3 hotspots:**\n");
@@ -4337,10 +4341,7 @@ fn generate_folder_doc(db: &GraphDb, folder_path: &str) -> anyhow::Result<String
 fn generate_community_doc(db: &GraphDb, community_id: i64) -> anyhow::Result<String> {
     let nodes = db.get_nodes_by_community(community_id)?;
     if nodes.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Community #{} not found",
-            community_id
-        ));
+        return Err(anyhow::anyhow!("Community #{} not found", community_id));
     }
 
     let mut out = String::new();
@@ -4392,8 +4393,10 @@ fn generate_onboard_doc(db: &GraphDb) -> anyhow::Result<String> {
             lang_list.join(", ")
         }
     ));
-    out.push_str(&format!("- **Nodes:** {} total ({} functions, {} classes, {} files)\n",
-        stats.node_count, stats.function_count, stats.class_count, stats.file_count));
+    out.push_str(&format!(
+        "- **Nodes:** {} total ({} functions, {} classes, {} files)\n",
+        stats.node_count, stats.function_count, stats.class_count, stats.file_count
+    ));
     out.push_str(&format!("- **Edges:** {}\n", stats.edge_count));
     out.push_str(&format!("- **Communities:** {}\n\n", stats.community_count));
 
@@ -4494,7 +4497,11 @@ fn generate_onboard_doc(db: &GraphDb) -> anyhow::Result<String> {
 
 // ── Architecture Rules ───────────────────────────────────────────────────
 
-fn cmd_rules_check(repo_path: &Path, rule_filter: Option<&str>, format: &str) -> anyhow::Result<()> {
+fn cmd_rules_check(
+    repo_path: &Path,
+    rule_filter: Option<&str>,
+    format: &str,
+) -> anyhow::Result<()> {
     let canonical = repo_path
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
@@ -4509,15 +4516,29 @@ fn cmd_rules_check(repo_path: &Path, rule_filter: Option<&str>, format: &str) ->
 
     let results = cgx_engine::run_rules(&db, &config.rules, rule_filter);
 
-    let error_count = results.iter().filter(|r| !r.passed() && r.rule.severity == "error").count();
-    let warning_count = results.iter().filter(|r| !r.passed() && r.rule.severity == "warning").count();
+    let error_count = results
+        .iter()
+        .filter(|r| !r.passed() && r.rule.severity == "error")
+        .count();
+    let warning_count = results
+        .iter()
+        .filter(|r| !r.passed() && r.rule.severity == "warning")
+        .count();
 
     match format {
         "github-actions" => {
             for result in &results {
                 for v in &result.violations {
-                    let level = if v.severity == "error" { "error" } else { "warning" };
-                    let file_part = v.file.as_deref().map(|f| format!("file={},", f)).unwrap_or_default();
+                    let level = if v.severity == "error" {
+                        "error"
+                    } else {
+                        "warning"
+                    };
+                    let file_part = v
+                        .file
+                        .as_deref()
+                        .map(|f| format!("file={},", f))
+                        .unwrap_or_default();
                     println!(
                         "::{} {}title=cgx Rule {}::{}",
                         level, file_part, v.rule_name, v.message
@@ -4603,11 +4624,12 @@ fn cmd_rules_list(repo_path: &Path) -> anyhow::Result<()> {
     println!("  RULES ({})", config.rules.len());
     println!("  {}", "\u{2500}".repeat(70));
     for rule in &config.rules {
-        let kind = if rule.built_in.is_some() { "built-in" } else { "sql" };
-        println!(
-            "  [{:<8}] [{:<8}] {}",
-            kind, rule.severity, rule.name
-        );
+        let kind = if rule.built_in.is_some() {
+            "built-in"
+        } else {
+            "sql"
+        };
+        println!("  [{:<8}] [{:<8}] {}", kind, rule.severity, rule.name);
         if !rule.description.is_empty() {
             println!("             {}", rule.description);
         }
@@ -4764,7 +4786,10 @@ fn cmd_review(repo_path: &Path, commit_ref: &str, format: &str) -> anyhow::Resul
                 println!();
                 println!("### Open TODOs in Changed Files");
                 for tag in open_todos.iter().take(5) {
-                    println!("- {} in {} line {}: {}", tag.tag_type, tag.file_path, tag.line, tag.text);
+                    println!(
+                        "- {} in {} line {}: {}",
+                        tag.tag_type, tag.file_path, tag.line, tag.text
+                    );
                 }
             }
         }
@@ -4785,7 +4810,9 @@ fn cmd_review(repo_path: &Path, commit_ref: &str, format: &str) -> anyhow::Resul
                 for node in changed_nodes.iter().take(3) {
                     println!(
                         "::error file={},title=cgx Blast Radius::Changing {} affects {} nodes",
-                        node.path, node.name, blast_set.len()
+                        node.path,
+                        node.name,
+                        blast_set.len()
                     );
                 }
             }
@@ -4838,7 +4865,10 @@ fn cmd_review(repo_path: &Path, commit_ref: &str, format: &str) -> anyhow::Resul
                 println!();
                 println!("  OPEN TODOS ({} in changed files)", open_todos.len());
                 for tag in open_todos.iter().take(5) {
-                    println!("  {} {}:{} — {}", tag.tag_type, tag.file_path, tag.line, tag.text);
+                    println!(
+                        "  {} {}:{} — {}",
+                        tag.tag_type, tag.file_path, tag.line, tag.text
+                    );
                 }
             }
         }
@@ -4874,12 +4904,8 @@ fn resolve_commit_range<'repo>(
         let new_obj = repo
             .revparse_single("HEAD")
             .context("Cannot resolve HEAD")?;
-        let old_commit = old_obj
-            .peel_to_commit()
-            .context("Ref is not a commit")?;
-        let new_commit = new_obj
-            .peel_to_commit()
-            .context("HEAD is not a commit")?;
+        let old_commit = old_obj.peel_to_commit().context("Ref is not a commit")?;
+        let new_commit = new_obj.peel_to_commit().context("HEAD is not a commit")?;
         Ok((old_commit, new_commit))
     }
 }
@@ -4895,7 +4921,9 @@ fn cmd_deps_health(repo_path: &Path, critical_only: bool) -> anyhow::Result<()> 
     let reports = cgx_engine::audit_dependencies(&canonical)?;
 
     if reports.is_empty() {
-        println!("  No package manifests found (package.json, Cargo.toml, requirements.txt, go.mod).");
+        println!(
+            "  No package manifests found (package.json, Cargo.toml, requirements.txt, go.mod)."
+        );
         return Ok(());
     }
 
@@ -4909,10 +4937,7 @@ fn cmd_deps_health(repo_path: &Path, critical_only: bool) -> anyhow::Result<()> 
     let affected: usize = reports.iter().filter(|r| r.cve_count > 0).count();
 
     println!();
-    println!(
-        "  DEPENDENCY HEALTH \u{2014} {} packages",
-        reports.len()
-    );
+    println!("  DEPENDENCY HEALTH \u{2014} {} packages", reports.len());
     println!("  {}", "\u{2500}".repeat(74));
     println!(
         "  {:<30}  {:<12}  {:>5}  {:>8}  Risk",
@@ -4970,7 +4995,10 @@ fn cmd_deps_audit(repo_path: &Path) -> anyhow::Result<()> {
         println!();
         println!("  Vulnerable packages:");
         for r in reports.iter().filter(|r| r.cve_count > 0) {
-            println!("    {} {} \u{2014} {} CVE(s)", r.name, r.version, r.cve_count);
+            println!(
+                "    {} {} \u{2014} {} CVE(s)",
+                r.name, r.version, r.cve_count
+            );
             for cve in r.cve_ids.iter().take(3) {
                 println!("      {}", cve);
             }
@@ -5605,7 +5633,10 @@ fn cmd_timeline(
     println!();
     println!("  cgx timeline");
     println!("  {}", "\u{2500}".repeat(80));
-    println!("  {:<9}  {:<11}  {:>6}  {:>6}  {:>6}  Message", "SHA", "Date", "Files", "+ins", "-del");
+    println!(
+        "  {:<9}  {:<11}  {:>6}  {:>6}  {:>6}  Message",
+        "SHA", "Date", "Files", "+ins", "-del"
+    );
     println!("  {}", "\u{2500}".repeat(80));
 
     for entry in &entries {
@@ -5641,10 +5672,7 @@ fn cmd_timeline(
 
     println!("  {}", "\u{2500}".repeat(80));
     println!("  {} commit(s) shown", entries.len());
-    println!(
-        "  Snapshots cached at: {}",
-        db.db_path.display()
-    );
+    println!("  Snapshots cached at: {}", db.db_path.display());
     println!();
 
     Ok(())

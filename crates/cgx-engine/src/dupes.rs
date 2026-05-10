@@ -81,8 +81,17 @@ pub fn normalize_body(text: &str) -> String {
             continue;
         }
         // Replace number literals with N
-        if chars[i].is_ascii_digit() || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == '_' || chars[i] == 'x' || chars[i] == 'o' || chars[i] == 'b') {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
+            while i < chars.len()
+                && (chars[i].is_ascii_digit()
+                    || chars[i] == '.'
+                    || chars[i] == '_'
+                    || chars[i] == 'x'
+                    || chars[i] == 'o'
+                    || chars[i] == 'b')
+            {
                 i += 1;
             }
             result.push('N');
@@ -122,14 +131,8 @@ pub fn text_similarity(a: &str, b: &str) -> f64 {
         return 0.0;
     }
 
-    let ngrams_a: std::collections::HashSet<_> = a
-        .as_bytes()
-        .windows(4)
-        .collect();
-    let ngrams_b: std::collections::HashSet<_> = b
-        .as_bytes()
-        .windows(4)
-        .collect();
+    let ngrams_a: std::collections::HashSet<_> = a.as_bytes().windows(4).collect();
+    let ngrams_b: std::collections::HashSet<_> = b.as_bytes().windows(4).collect();
 
     if ngrams_a.is_empty() || ngrams_b.is_empty() {
         return 0.0;
@@ -199,8 +202,7 @@ pub fn detect_clones(
         .collect();
 
     // Build fingerprint map for exact matches
-    let mut fp_map: std::collections::HashMap<u64, Vec<usize>> =
-        std::collections::HashMap::new();
+    let mut fp_map: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
     for (idx, body) in &valid_bodies {
         let mut hasher = DefaultHasher::new();
         body.hash(&mut hasher);
