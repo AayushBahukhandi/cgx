@@ -57,7 +57,16 @@ cgx hotspots
 | **AST Parsing** | Tree-sitter parses TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP in parallel |
 | **JSX Caller Tracking** | React component usages (`<MyComp />`) are tracked as call edges |
 | **JSX Comment Extraction** | `{/* TODO */}` expression comments and commented-out JSX code are extracted and tagged separately from code comments |
-| **Annotation Index** | `cgx todos` lists all TODO/FIXME/HACK/NOTE tags with `comment_type` (code vs jsx vs jsx_commented_code) |
+| **Annotation Index** | `cgx todos` lists all TODO/FIXME/HACK/NOTE tags with `comment_type` (code vs jsx) |
+| **Docs Coverage** | `cgx docs coverage` reports what % of exported functions have doc comments, by community |
+| **Complexity Scoring** | `cgx complexity` ranks functions by cognitive complexity score (if/for/switch/ternary nesting) |
+| **Test Coverage Overlay** | `cgx test coverage` / `cgx test gaps` maps test files → source functions via TESTS edges |
+| **Dependency Health** | `cgx deps health` parses package.json / Cargo.toml / requirements.txt / go.mod, cross-references OSV for CVEs |
+| **PR Review Assistant** | `cgx review` generates a structured brief: blast radius, hotspot alerts, missing tests, suggested reviewers |
+| **Architecture Rules** | `cgx rules check` runs SQL or built-in rules (`no_cycles`, `max_coupling`, etc.) with GitHub Actions output |
+| **Duplicate Detection** | `cgx dupes` finds near-identical function bodies via normalized AST fingerprints + Jaccard similarity |
+| **Architecture Explainer** | `cgx explain AuthService` / `cgx explain --onboard` generates structured Markdown docs from the graph |
+| **Timeline** | `cgx timeline` snapshots the graph at each commit; scrubber in the web UI lets you watch architecture evolve |
 | **Git Intelligence** | Churn scores, co-change edges, ownership — the temporal graph |
 | **DuckDB Storage** | Zero-server embedded graph database. Instant queries. |
 | **Community Detection** | Leiden algorithm auto-clusters your codebase into modules |
@@ -147,7 +156,9 @@ cgx update --auto   # detect your install method and upgrade automatically
 
 Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 
-> **On v0.1.9 or older?** Run `cgx update --auto` or reinstall. v0.2.0 adds dead code detection (`cgx query dead-code`) and fixes cross-file call tracking — `new ClassName()`, static method calls, and module-level function calls now all create proper edges, eliminating the majority of false positives. Re-run `cgx analyze --force` after upgrading to refresh the graph.
+> **On v0.2.x?** Run `cgx update --auto` or reinstall. v0.3.0 adds `cgx todos`, `cgx docs coverage`, `cgx complexity`, `cgx test coverage/gaps`, `cgx deps health`, `cgx review`, `cgx rules check`, `cgx dupes`, `cgx explain`, and `cgx timeline` — a full suite of advanced code intelligence commands. Re-run `cgx analyze --force` after upgrading to refresh the graph with new columns (complexity, doc_comment, is_tested, test_count).
+>
+> **On v0.1.9 or older?** Run `cgx update --auto` or reinstall. v0.2.0 added dead code detection (`cgx query dead-code`) and fixed cross-file call tracking — `new ClassName()`, static method calls, and module-level function calls now all create proper edges, eliminating the majority of false positives.
 
 ---
 
@@ -248,6 +259,106 @@ cgx query owners src/payments/          # git blame ownership
 cgx hotspots                   # high churn × high coupling = danger zone
 cgx blame-graph                # ownership by contributor
 cgx diff HEAD~5                # architecture diff between commits
+```
+
+### Documentation & Annotations
+
+```bash
+cgx todos                          # list all TODO/FIXME/HACK/NOTE tags
+cgx todos --kind=FIXME             # filter by tag kind
+cgx todos --comment-type=jsx       # only JSX {/* */} comments
+cgx docs coverage                  # % of exported functions with doc comments
+```
+
+### Complexity
+
+```bash
+cgx complexity                     # top 20 functions by cognitive complexity
+cgx complexity --threshold=0.15    # functions with score > 0.15
+cgx complexity --combined          # sort by complexity × churn combined risk
+```
+
+### Test Coverage
+
+```bash
+cgx test coverage                  # overall test coverage stats
+cgx test coverage --by=community   # breakdown by cluster
+cgx test gaps                      # untested high-coupling functions
+cgx test suggest                   # prioritized test-writing list
+```
+
+### Dependency Health
+
+```bash
+cgx deps health                    # full report — packages, versions, CVE counts
+cgx deps health --critical         # only CVE-affected packages
+cgx deps audit                     # fast CVE count per package
+cgx deps outdated                  # packages with newer versions available
+```
+
+### PR Review Assistant
+
+```bash
+cgx review                         # current branch vs main/master
+cgx review feature/my-branch       # specific branch vs main
+cgx review HEAD~5                  # last 5 commits
+cgx review --format=markdown       # GitHub PR comment format
+cgx review --format=github-actions # GitHub Actions annotation format
+```
+
+### Architecture Rules
+
+```bash
+cgx rules check                    # run all rules in .cgx/rules.toml
+cgx rules check --rule=no-cycles   # run a specific rule
+cgx rules list                     # list all defined rules
+```
+
+Example `.cgx/rules.toml`:
+
+```toml
+[[rules]]
+name = "no-circular-dependencies"
+built_in = "no_cycles"
+severity = "error"
+
+[[rules]]
+name = "no-direct-db-access-outside-repository-layer"
+description = "Only repository files should import from db/"
+severity = "error"
+query = """
+SELECT n.path, e.dst FROM edges e
+JOIN nodes n ON n.id = e.src
+WHERE e.kind = 'IMPORTS' AND e.dst LIKE '%/db/%'
+  AND n.path NOT LIKE '%/repository/%'
+"""
+```
+
+Built-in rules: `no_cycles`, `max_coupling`, `max_complexity`, `require_docs_for_public`.
+
+### Duplicate Detection
+
+```bash
+cgx dupes                          # all clone pairs (threshold 80%)
+cgx dupes --threshold=0.9          # near-identical clones only
+cgx dupes --kind=exact             # exact duplicates only
+```
+
+### Architecture Explainer
+
+```bash
+cgx explain AuthService            # explain a specific symbol
+cgx explain src/auth/              # explain a folder
+cgx explain --onboard              # full onboarding guide for the repo
+cgx explain --onboard --out=ARCHITECTURE.md  # write to file
+```
+
+### Timeline
+
+```bash
+cgx timeline                       # snapshot last 20 commits
+cgx timeline --commits=50          # last N commits
+cgx timeline --since=2024-01       # since a date
 ```
 
 ### Export
@@ -399,6 +510,16 @@ Combined with in-degree, this gives you the hotspot score.
 | Git history (churn/blame) | ✅ | ❌ | ❌ |
 | Co-change graph | ✅ | ❌ | ❌ |
 | Dead code detection | ✅ | ❌ | ❌ |
+| Cognitive complexity scoring | ✅ | ❌ | ❌ |
+| TODO/FIXME annotation index | ✅ | ❌ | ❌ |
+| Doc coverage reporting | ✅ | ❌ | ❌ |
+| Test coverage overlay | ✅ | ❌ | ❌ |
+| Dependency CVE health | ✅ | ❌ | ❌ |
+| PR review brief generator | ✅ | ❌ | ❌ |
+| Architecture fitness rules | ✅ | ❌ | ❌ |
+| Duplicate / clone detection | ✅ | ❌ | ❌ |
+| Architecture explainer | ✅ | ❌ | ❌ |
+| Commit timeline snapshots | ✅ | ❌ | ❌ |
 | Terminal TUI | ✅ | ❌ | ❌ |
 | WebGL browser graph | ✅ | ❌ | ✅ |
 | AI Chat (multi-provider) | ✅ | ❌ | ❌ |
@@ -537,12 +658,26 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## Roadmap
 
+**v0.3.0 — Advanced Code Intelligence (shipped)**
+- [x] `cgx todos` — annotation index (TODO/FIXME/HACK/NOTE, JSX comments)
+- [x] `cgx docs coverage` — documentation coverage by community
+- [x] `cgx complexity` — cognitive complexity scoring per function
+- [x] `cgx test coverage` / `cgx test gaps` — test coverage overlay via TESTS edges
+- [x] `cgx deps health` / `cgx deps audit` — dependency CVE health (OSV API)
+- [x] `cgx review` — PR review brief (blast radius, hotspots, missing tests, reviewers)
+- [x] `cgx rules check` — architecture fitness functions (SQL + built-in rules)
+- [x] `cgx dupes` — duplicate/clone detection via normalized AST fingerprints
+- [x] `cgx explain` — architecture explainer for symbols, folders, and full onboarding
+- [x] `cgx timeline` — git commit timeline snapshots
+
+**Next**
 - [ ] `cgx changelog` — generate changelogs from graph diffs
 - [ ] VS Code extension
 - [ ] `cgx watch` with debounced incremental indexing
 - [ ] Mermaid diagram auto-commit to docs/ on every push (GitHub Action)
 - [ ] Ruby, Swift, C/C++ parsers
 - [ ] `cgx init` — guided first-run experience
+- [ ] Semantic code search (`cgx query search --semantic` with optional LLM summaries)
 - [ ] cgx cloud — shared graphs for teams (hosted)
 
 ---

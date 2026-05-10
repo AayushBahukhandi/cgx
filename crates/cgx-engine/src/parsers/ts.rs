@@ -181,10 +181,15 @@ impl LanguageParser for TypeScriptParser {
         extract_calls(&mut edges, root, source_bytes, file);
 
         // Mark exported nodes based on export statements
+        // Merge exported=true into existing metadata (preserving complexity, doc_comment, etc.)
         let exported_names = collect_exported_names(root, source_bytes);
         for node in &mut nodes {
             if exported_names.contains(&node.name) {
-                node.metadata = serde_json::json!({"exported": true});
+                if let Some(obj) = node.metadata.as_object_mut() {
+                    obj.insert("exported".to_string(), serde_json::Value::Bool(true));
+                } else {
+                    node.metadata = serde_json::json!({"exported": true});
+                }
             }
         }
 
@@ -301,23 +306,37 @@ fn extract_nodes(
             .map(|c| c.node.end_position())
             .unwrap_or_else(|| name_capture.node.end_position());
 
-        let Some(_fn_capture) = m.captures.iter().find(|c| {
+        let fn_capture_node = m.captures.iter().find(|c| {
             let cap_name = &query.capture_names()[c.index as usize];
             *cap_name == "fn" || *cap_name == "cls" || *cap_name == "m"
-        }) else {
+        });
+
+        let Some(fn_capture) = fn_capture_node else {
             continue;
         };
 
         let id = format!("{}:{}:{}", prefix, file.relative_path, name);
+
+        // Compute cyclomatic-style complexity
+        let complexity = compute_complexity(fn_capture.node, source_bytes);
+
+        // Extract doc comment (/** */ or /// just before the function)
+        let fn_line = node_start.row as u32 + 1;
+        let doc_comment = extract_doc_comment(root, source_bytes, fn_line);
+
+        let metadata = serde_json::json!({
+            "complexity": complexity,
+            "doc_comment": doc_comment,
+        });
 
         nodes.push(NodeDef {
             id,
             kind: kind.clone(),
             name,
             path: file.relative_path.clone(),
-            line_start: node_start.row as u32 + 1,
+            line_start: fn_line,
             line_end: body_end.row as u32 + 1,
-            ..Default::default()
+            metadata,
         });
 
         edges.push(EdgeDef {
@@ -664,6 +683,100 @@ fn walk_for_calls(
     if pushed {
         fn_stack.pop();
     }
+}
+
+/// Compute a normalized cyclomatic-style complexity score for a function node.
+/// Returns a value in 0.0..=1.0 (raw score capped at 100, then divided by 100).
+fn compute_complexity(node: tree_sitter::Node, source: &[u8]) -> f64 {
+    let raw = count_complexity(node, source, 0);
+    let capped = raw.min(100.0);
+    capped / 100.0
+}
+
+fn count_complexity(node: tree_sitter::Node, source: &[u8], nesting: u32) -> f64 {
+    let mut score: f64 = 0.0;
+    let kind = node.kind();
+
+    let is_branching = matches!(
+        kind,
+        "if_statement"
+            | "for_statement"
+            | "for_in_statement"
+            | "while_statement"
+            | "do_statement"
+            | "switch_statement"
+            | "catch_clause"
+            | "ternary_expression"
+    );
+
+    if is_branching {
+        score += 1.0 + (nesting as f64 * 0.5);
+    }
+
+    // logical expressions (&&, ||)
+    if kind == "binary_expression" || kind == "logical_expression" {
+        if let Some(op) = node.child_by_field_name("operator") {
+            let op_text = op.utf8_text(source).unwrap_or("");
+            if op_text == "&&" || op_text == "||" {
+                score += 0.5;
+            }
+        }
+    }
+
+    let new_nesting = if is_branching { nesting + 1 } else { nesting };
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            score += count_complexity(cursor.node(), source, new_nesting);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+
+    score
+}
+
+/// Look for a doc comment (/** */ or ///) just before the function line.
+/// Searches up to 3 lines before fn_line for a comment node ending near that line.
+fn extract_doc_comment(
+    root: tree_sitter::Node,
+    source: &[u8],
+    fn_line: u32,
+) -> Option<String> {
+    find_doc_comment(root, source, fn_line)
+}
+
+fn find_doc_comment(
+    node: tree_sitter::Node,
+    source: &[u8],
+    fn_line: u32,
+) -> Option<String> {
+    if node.kind() == "comment" {
+        let end_line = node.end_position().row as u32 + 1;
+        // Comment should end at or just before the function line (within 3 lines)
+        if end_line >= fn_line.saturating_sub(3) && end_line < fn_line {
+            let text = node.utf8_text(source).unwrap_or("").trim().to_string();
+            if text.starts_with("/**") || text.starts_with("///") {
+                return Some(text);
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            if let Some(result) = find_doc_comment(cursor.node(), source, fn_line) {
+                return Some(result);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+
+    None
 }
 
 const ANNOTATION_TAGS: &[&str] = &[

@@ -32,6 +32,14 @@ pub struct Node {
     pub is_dead_candidate: bool,
     #[serde(default)]
     pub dead_reason: Option<String>,
+    #[serde(default)]
+    pub complexity: f64,
+    #[serde(default)]
+    pub is_test_file: bool,
+    #[serde(default)]
+    pub test_count: i64,
+    #[serde(default)]
+    pub is_tested: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,7 +70,23 @@ pub struct RepoStats {
 }
 
 pub type CommunityRow = (i64, String, i64, Vec<String>);
+/// (overall_pct, Vec<(community_id, documented, total)>, undocumented_high_coupling)
+pub type DocsCoverage = (f64, Vec<(i64, i64, i64)>, Vec<Node>);
+/// (overall_pct, tested_count, untested_count, gaps)
+pub type TestCoverageSummary = (f64, i64, i64, Vec<Node>);
 type CommunityGroup = (Vec<(String, i64, String)>, i64); // (kind, in_degree, name)
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotEntry {
+    pub id: String,
+    pub commit_sha: String,
+    pub commit_date: String,
+    pub commit_msg: String,
+    pub node_count: i64,
+    pub edge_count: i64,
+    /// JSON blob: {"file_count": N, "insertions": N, "deletions": N}
+    pub snapshot_data: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagRow {
@@ -73,6 +97,15 @@ pub struct TagRow {
     pub text: String,
     /// "code", "jsx", or "jsx_commented_code"
     pub comment_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloneRow {
+    pub id: String,
+    pub node_a: String,
+    pub node_b: String,
+    pub similarity: f64,
+    pub kind: String,
 }
 
 impl Default for Node {
@@ -93,6 +126,10 @@ impl Default for Node {
             exported: false,
             is_dead_candidate: false,
             dead_reason: None,
+            complexity: 0.0,
+            is_test_file: false,
+            test_count: 0,
+            is_tested: false,
         }
     }
 }
@@ -104,6 +141,11 @@ impl Node {
             .get("exported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let complexity = d
+            .metadata
+            .get("complexity")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
         Self {
             id: d.id.clone(),
             kind: d.kind.as_str().to_string(),
@@ -120,6 +162,10 @@ impl Node {
             exported,
             is_dead_candidate: false,
             dead_reason: None,
+            complexity,
+            is_test_file: false,
+            test_count: 0,
+            is_tested: false,
         }
     }
 }
@@ -207,6 +253,13 @@ impl GraphDb {
                 text         VARCHAR NOT NULL,
                 comment_type VARCHAR NOT NULL DEFAULT 'code'
             );
+            CREATE TABLE IF NOT EXISTS clones (
+                id         VARCHAR PRIMARY KEY,
+                node_a     VARCHAR NOT NULL,
+                node_b     VARCHAR NOT NULL,
+                similarity FLOAT NOT NULL,
+                kind       VARCHAR NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_nodes_kind      ON nodes(kind);
             CREATE INDEX IF NOT EXISTS idx_nodes_path      ON nodes(path);
             CREATE INDEX IF NOT EXISTS idx_nodes_community ON nodes(community);
@@ -214,7 +267,9 @@ impl GraphDb {
             CREATE INDEX IF NOT EXISTS idx_edges_dst       ON edges(dst);
             CREATE INDEX IF NOT EXISTS idx_edges_kind      ON edges(kind);
             CREATE INDEX IF NOT EXISTS idx_tags_file       ON tags(file_path);
-            CREATE INDEX IF NOT EXISTS idx_tags_type       ON tags(tag_type);",
+            CREATE INDEX IF NOT EXISTS idx_tags_type       ON tags(tag_type);
+            CREATE INDEX IF NOT EXISTS idx_clones_a        ON clones(node_a);
+            CREATE INDEX IF NOT EXISTS idx_clones_b        ON clones(node_b);",
         )?;
 
         // Migration: add new columns to existing DBs that pre-date this schema.
@@ -224,7 +279,27 @@ impl GraphDb {
             "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS exported           TINYINT DEFAULT 0;
              ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_dead_candidate  TINYINT DEFAULT 0;
              ALTER TABLE nodes ADD COLUMN IF NOT EXISTS dead_reason        TEXT;
-             CREATE INDEX IF NOT EXISTS idx_nodes_dead ON nodes(is_dead_candidate);",
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS complexity         DOUBLE DEFAULT 0.0;
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS doc_comment        TEXT;
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_test_file       TINYINT DEFAULT 0;
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS test_count         INTEGER DEFAULT 0;
+             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_tested          TINYINT DEFAULT 0;
+             CREATE INDEX IF NOT EXISTS idx_nodes_dead       ON nodes(is_dead_candidate);
+             CREATE INDEX IF NOT EXISTS idx_nodes_complexity ON nodes(complexity);
+             CREATE INDEX IF NOT EXISTS idx_nodes_is_tested  ON nodes(is_tested);",
+        )?;
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS snapshots (
+                id           VARCHAR PRIMARY KEY,
+                commit_sha   VARCHAR NOT NULL,
+                commit_date  TEXT NOT NULL,
+                commit_msg   VARCHAR,
+                node_count   INTEGER,
+                edge_count   INTEGER,
+                snapshot_data TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_snapshots_date ON snapshots(commit_date);",
         )?;
 
         Ok(Self {
@@ -240,8 +315,8 @@ impl GraphDb {
         }
         let mut count = 0;
         let mut stmt = self.conn.prepare(
-            "INSERT OR REPLACE INTO nodes (id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, exported)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO nodes (id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, exported, complexity, is_test_file, test_count, is_tested)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )?;
         for node in nodes {
             stmt.execute(params![
@@ -258,6 +333,10 @@ impl GraphDb {
                 node.in_degree,
                 node.out_degree,
                 node.exported as i32,
+                node.complexity,
+                node.is_test_file as i32,
+                node.test_count,
+                node.is_tested as i32,
             ])?;
             count += 1;
         }
@@ -391,7 +470,7 @@ impl GraphDb {
     pub fn get_node(&self, id: &str) -> anyhow::Result<Option<Node>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false) as exported, COALESCE(is_dead_candidate, false) as is_dead_candidate, dead_reason FROM nodes WHERE id = ?")?;
+            .prepare("SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false) as exported, COALESCE(is_dead_candidate, false) as is_dead_candidate, dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0) FROM nodes WHERE id = ?")?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(Node {
                 id: row.get(0)?,
@@ -409,6 +488,10 @@ impl GraphDb {
                 exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                 dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
             })
         })?;
 
@@ -433,7 +516,7 @@ impl GraphDb {
 
             for cur_id in &current {
                 let mut stmt = self.conn.prepare(
-                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree, COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false), n.dead_reason
+                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree, COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false), n.dead_reason, COALESCE(n.complexity, 0.0), COALESCE(n.is_test_file, 0), COALESCE(n.test_count, 0), COALESCE(n.is_tested, 0)
                      FROM nodes n
                      INNER JOIN edges e ON (e.dst = n.id AND e.src = ?1) OR (e.src = n.id AND e.dst = ?2)
                      LIMIT 100",
@@ -455,6 +538,10 @@ impl GraphDb {
                         exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                         is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                         dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                        complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                        is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                        test_count: row.get::<_, i64>(17).unwrap_or(0),
+                        is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
                     })
                 })?;
 
@@ -474,7 +561,7 @@ impl GraphDb {
 
     pub fn get_all_nodes(&self) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason FROM nodes",
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0) FROM nodes",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(Node {
@@ -493,6 +580,10 @@ impl GraphDb {
                 exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                 dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
             })
         })?;
 
@@ -710,7 +801,7 @@ impl GraphDb {
 
     pub fn get_entry_points(&self, limit: usize) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
              FROM nodes
              WHERE in_degree = 0 AND kind != 'File' AND kind != 'Author'
              ORDER BY out_degree DESC
@@ -733,6 +824,10 @@ impl GraphDb {
                 exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                 dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
             })
         })?;
         let mut results = Vec::new();
@@ -744,7 +839,7 @@ impl GraphDb {
 
     pub fn get_god_nodes(&self, limit: usize) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
              FROM nodes
              WHERE in_degree > 0 AND kind != 'File' AND kind != 'Author'
              ORDER BY in_degree DESC
@@ -767,6 +862,10 @@ impl GraphDb {
                 exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                 dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
             })
         })?;
         let mut results = Vec::new();
@@ -847,7 +946,7 @@ impl GraphDb {
             let mut next = Vec::new();
             for cur_id in &current {
                 let mut stmt = self.conn.prepare(
-                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree, COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false), n.dead_reason
+                    "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language, n.churn, n.coupling, n.community, n.in_degree, n.out_degree, COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false), n.dead_reason, COALESCE(n.complexity, 0.0), COALESCE(n.is_test_file, 0), COALESCE(n.test_count, 0), COALESCE(n.is_tested, 0)
                      FROM nodes n
                      INNER JOIN edges e ON e.src = n.id AND e.dst = ?
                      LIMIT 100",
@@ -869,6 +968,10 @@ impl GraphDb {
                         exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                         is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                         dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                        complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                        is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                        test_count: row.get::<_, i64>(17).unwrap_or(0),
+                        is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
                     })
                 })?;
                 for row in rows {
@@ -887,7 +990,7 @@ impl GraphDb {
 
     pub fn get_nodes_by_community(&self, community: i64) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason FROM nodes WHERE community = ?",
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0) FROM nodes WHERE community = ?",
         )?;
         let rows = stmt.query_map(params![community], |row| {
             Ok(Node {
@@ -906,6 +1009,10 @@ impl GraphDb {
                 exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
                 is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
                 dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
             })
         })?;
         let mut nodes = Vec::new();
@@ -1031,6 +1138,365 @@ impl GraphDb {
             paths.iter().map(|p| p as &dyn duckdb::ToSql).collect();
         let count = stmt_nodes.execute(params_nodes.as_slice())?;
         Ok(count)
+    }
+
+    pub fn update_node_doc_comment(&self, id: &str, doc: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE nodes SET doc_comment = ? WHERE id = ?",
+            params![doc, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_node_complexity(&self, id: &str, complexity: f64) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE nodes SET complexity = ? WHERE id = ?",
+            params![complexity, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_nodes_by_complexity(
+        &self,
+        limit: usize,
+        min_score: f64,
+    ) -> anyhow::Result<Vec<Node>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
+             FROM nodes
+             WHERE kind = 'Function' AND COALESCE(complexity, 0.0) >= ?
+             ORDER BY complexity DESC
+             LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![min_score, limit as i64], |row| {
+            Ok(Node {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                path: row.get(3)?,
+                line_start: row.get(4)?,
+                line_end: row.get(5)?,
+                language: row.get(6)?,
+                churn: row.get(7)?,
+                coupling: row.get(8)?,
+                community: row.get(9)?,
+                in_degree: row.get(10)?,
+                out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Returns (overall_pct, Vec<(community_id, documented, total)>, Vec<undocumented high-coupling nodes>)
+    pub fn get_docs_coverage(
+        &self,
+    ) -> anyhow::Result<DocsCoverage> {
+        let overall: f64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(
+                    CAST(SUM(CASE WHEN doc_comment IS NOT NULL AND doc_comment != '' THEN 1 ELSE 0 END) AS DOUBLE)
+                    / NULLIF(CAST(COUNT(*) AS DOUBLE), 0.0) * 100.0,
+                    0.0)
+                 FROM nodes WHERE kind IN ('Function', 'Class') AND path NOT LIKE '%test%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0.0);
+
+        let mut by_community = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT community,
+                    SUM(CASE WHEN doc_comment IS NOT NULL AND doc_comment != '' THEN 1 ELSE 0 END) as documented,
+                    COUNT(*) as total
+             FROM nodes
+             WHERE kind IN ('Function', 'Class') AND path NOT LIKE '%test%'
+             GROUP BY community
+             ORDER BY community",
+        )?;
+        let comm_rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in comm_rows {
+            by_community.push(row?);
+        }
+
+        let mut undoc_stmt = self.conn.prepare(
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
+             FROM nodes
+             WHERE kind = 'Function' AND (doc_comment IS NULL OR doc_comment = '')
+             ORDER BY in_degree DESC
+             LIMIT 10",
+        )?;
+        let undoc_rows = undoc_stmt.query_map([], |row| {
+            Ok(Node {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                path: row.get(3)?,
+                line_start: row.get(4)?,
+                line_end: row.get(5)?,
+                language: row.get(6)?,
+                churn: row.get(7)?,
+                coupling: row.get(8)?,
+                community: row.get(9)?,
+                in_degree: row.get(10)?,
+                out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+            })
+        })?;
+        let mut undocumented = Vec::new();
+        for row in undoc_rows {
+            undocumented.push(row?);
+        }
+
+        Ok((overall, by_community, undocumented))
+    }
+
+    pub fn upsert_clones(&self, clones: &[CloneRow]) -> anyhow::Result<usize> {
+        if clones.is_empty() {
+            return Ok(0);
+        }
+        let mut count = 0;
+        let mut stmt = self.conn.prepare(
+            "INSERT OR REPLACE INTO clones (id, node_a, node_b, similarity, kind) VALUES (?, ?, ?, ?, ?)",
+        )?;
+        for c in clones {
+            stmt.execute(params![c.id, c.node_a, c.node_b, c.similarity, c.kind])?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    pub fn get_clones(
+        &self,
+        min_similarity: f64,
+        kind_filter: Option<&str>,
+    ) -> anyhow::Result<Vec<CloneRow>> {
+        let (sql, use_kind) = if kind_filter.is_some() {
+            (
+                "SELECT id, node_a, node_b, similarity, kind FROM clones WHERE similarity >= ? AND kind = ? ORDER BY similarity DESC",
+                true,
+            )
+        } else {
+            (
+                "SELECT id, node_a, node_b, similarity, kind FROM clones WHERE similarity >= ? ORDER BY similarity DESC",
+                false,
+            )
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let map_row = |row: &duckdb::Row| {
+            Ok(CloneRow {
+                id: row.get(0)?,
+                node_a: row.get(1)?,
+                node_b: row.get(2)?,
+                similarity: row.get::<_, f32>(3)? as f64,
+                kind: row.get(4)?,
+            })
+        };
+
+        let rows = if use_kind {
+            stmt.query_map(
+                params![min_similarity, kind_filter.unwrap_or("")],
+                map_row,
+            )?
+        } else {
+            stmt.query_map(params![min_similarity], map_row)?
+        };
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn clear_clones(&self) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM clones", [])?;
+        Ok(())
+    }
+
+    pub fn mark_test_files(&self, paths: &[String]) -> anyhow::Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut stmt = self
+            .conn
+            .prepare("UPDATE nodes SET is_test_file = 1 WHERE path = ?")?;
+        for path in paths {
+            stmt.execute(params![path])?;
+        }
+        Ok(())
+    }
+
+    /// After inserting TESTS edges, compute test_count and is_tested for non-test nodes.
+    pub fn update_test_coverage(&self) -> anyhow::Result<()> {
+        self.conn.execute_batch(
+            "UPDATE nodes SET test_count = (
+                SELECT COUNT(*) FROM edges
+                WHERE edges.dst = nodes.id AND edges.kind = 'TESTS'
+             );
+             UPDATE nodes SET is_tested = (test_count > 0)
+             WHERE is_test_file = 0;",
+        )?;
+        Ok(())
+    }
+
+    /// Returns (overall_pct, tested_count, untested_count, gaps ranked by risk)
+    pub fn get_test_coverage_summary(
+        &self,
+        top_n: usize,
+    ) -> anyhow::Result<(f64, i64, i64, Vec<Node>)> {
+        let tested: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE kind IN ('Function','Class') AND is_test_file = 0 AND is_tested = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE kind IN ('Function','Class') AND is_test_file = 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let overall_pct = if total > 0 {
+            (tested as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut gap_stmt = self.conn.prepare(
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
+             FROM nodes
+             WHERE kind IN ('Function','Class') AND is_test_file = 0 AND COALESCE(is_tested, 0) = 0
+             ORDER BY (churn * CAST(in_degree AS DOUBLE) + CAST(in_degree AS DOUBLE) * 0.5) DESC
+             LIMIT ?",
+        )?;
+        let gap_rows = gap_stmt.query_map(params![top_n as i64], |row| {
+            Ok(Node {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                path: row.get(3)?,
+                line_start: row.get(4)?,
+                line_end: row.get(5)?,
+                language: row.get(6)?,
+                churn: row.get(7)?,
+                coupling: row.get(8)?,
+                community: row.get(9)?,
+                in_degree: row.get(10)?,
+                out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+            })
+        })?;
+        let mut gaps = Vec::new();
+        for row in gap_rows {
+            gaps.push(row?);
+        }
+
+        Ok((overall_pct, tested, total - tested, gaps))
+    }
+
+    pub fn upsert_snapshot(&self, entry: &SnapshotEntry) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO snapshots (id, commit_sha, commit_date, commit_msg, node_count, edge_count, snapshot_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![
+                entry.id,
+                entry.commit_sha,
+                entry.commit_date,
+                entry.commit_msg,
+                entry.node_count,
+                entry.edge_count,
+                entry.snapshot_data,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_snapshots(&self, limit: usize) -> anyhow::Result<Vec<SnapshotEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, commit_sha, commit_date, commit_msg, COALESCE(node_count,0), COALESCE(edge_count,0), snapshot_data
+             FROM snapshots ORDER BY commit_date DESC LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(SnapshotEntry {
+                id: row.get(0)?,
+                commit_sha: row.get(1)?,
+                commit_date: row.get(2)?,
+                commit_msg: row.get(3)?,
+                node_count: row.get(4)?,
+                edge_count: row.get(5)?,
+                snapshot_data: row.get(6)?,
+            })
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn get_snapshot_by_sha(&self, sha: &str) -> anyhow::Result<Option<SnapshotEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, commit_sha, commit_date, commit_msg, COALESCE(node_count,0), COALESCE(edge_count,0), snapshot_data
+             FROM snapshots WHERE commit_sha = ? OR commit_sha LIKE ? LIMIT 1",
+        )?;
+        let prefix = format!("{}%", sha);
+        let mut rows = stmt.query_map(params![sha, prefix], |row| {
+            Ok(SnapshotEntry {
+                id: row.get(0)?,
+                commit_sha: row.get(1)?,
+                commit_date: row.get(2)?,
+                commit_msg: row.get(3)?,
+                node_count: row.get(4)?,
+                edge_count: row.get(5)?,
+                snapshot_data: row.get(6)?,
+            })
+        })?;
+        match rows.next() {
+            Some(Ok(entry)) => Ok(Some(entry)),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn snapshot_count(&self) -> i64 {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))
+            .unwrap_or(0)
     }
 }
 

@@ -509,6 +509,10 @@ fn test_exported_persisted_in_db() {
         exported: true,
         is_dead_candidate: false,
         dead_reason: None,
+        complexity: 0.0,
+        is_test_file: false,
+        test_count: 0,
+        is_tested: false,
     };
 
     db.upsert_nodes(&[node_with_export]).unwrap();

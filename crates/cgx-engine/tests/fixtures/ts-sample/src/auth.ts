@@ -5,7 +5,10 @@ export class AuthService {
   async login(email: string, password: string): Promise<boolean> {
     const hashed = hashPassword(password);
     const result = await query('SELECT * FROM users WHERE email = ?', [email]);
-    return result.length > 0;
+    if (result.length === 0) {
+      return false;
+    }
+    return true;
   }
 
   async logout(sessionId: string): Promise<void> {
@@ -16,3 +19,4 @@ export class AuthService {
 export function validateToken(token: string): boolean {
   return token.length === 64;
 }
+// TODO: fix this later

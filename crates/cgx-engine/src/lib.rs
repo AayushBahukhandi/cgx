@@ -1,7 +1,9 @@
 pub mod cluster;
 pub mod config;
 pub mod deadcode;
+pub mod deps;
 pub mod diff;
+pub mod dupes;
 pub mod export;
 pub mod git;
 pub mod graph;
@@ -9,7 +11,9 @@ pub mod parser;
 pub mod parsers;
 pub mod registry;
 pub mod resolver;
+pub mod rules;
 pub mod skill;
+pub mod timeline;
 pub mod walker;
 
 pub use cluster::{detect_communities, run_clustering};
@@ -20,18 +24,25 @@ pub use config::{
 pub use deadcode::{
     detect_dead_code, mark_dead_candidates, Confidence, DeadCodeReport, DeadNode, DeadReason,
 };
+pub use dupes::{detect_clones, CloneKind, ClonePair};
 pub use diff::{
     compute_impact, diff_graphs, snapshot_at_commit, GraphDiff, GraphSnapshot, ImpactReport,
 };
 pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
 pub use git::{analyze_repo, GitAnalysis};
-pub use graph::{CommunityRow, Edge, GraphDb, Node, RepoStats, TagRow};
+pub use deps::{audit_dependencies, parse_manifests, DependencyReport};
+pub use rules::{run_rules, Rule, RuleResult, RulesConfig, RuleViolation};
+pub use graph::{
+    CloneRow, CommunityRow, DocsCoverage, Edge, GraphDb, Node, RepoStats, SnapshotEntry, TagRow,
+    TestCoverageSummary,
+};
+pub use timeline::build_timeline;
 pub use parser::{
     CommentKind, CommentTag, EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult,
     ParserRegistry,
 };
 pub use registry::{Registry, RepoEntry};
-pub use resolver::resolve;
+pub use resolver::{is_test_path, resolve};
 pub use skill::{
     build_skill_data, generate_agents_md, generate_skill, install_git_hooks, write_agents_md,
     write_skill, CommunityInfo, SkillData,
@@ -175,6 +186,21 @@ pub fn analyze_repo_incremental(
     db.clear()?;
     db.upsert_nodes(&kept_nodes)?;
 
+    // Update doc_comment for nodes that have it in metadata (from changed files)
+    for result in &results {
+        for node_def in &result.nodes {
+            if let Some(doc) = node_def
+                .metadata
+                .get("doc_comment")
+                .and_then(|v| v.as_str())
+            {
+                if !doc.is_empty() {
+                    let _ = db.update_node_doc_comment(&node_def.id, doc);
+                }
+            }
+        }
+    }
+
     // Re-convert kept nodes back to NodeDef for resolution
     let all_node_defs: Vec<NodeDef> = kept_nodes
         .iter()
@@ -298,6 +324,10 @@ pub fn analyze_repo_incremental(
                 exported: false,
                 is_dead_candidate: false,
                 dead_reason: None,
+                complexity: 0.0,
+                is_test_file: false,
+                test_count: 0,
+                is_tested: false,
             });
             for (file_path, _email, _percent) in files.iter().take(5) {
                 own_edges.push(crate::graph::Edge {
@@ -335,6 +365,25 @@ pub fn analyze_repo_incremental(
     // 11. Update degrees and coupling
     db.update_in_out_degrees()?;
     db.compute_coupling()?;
+
+    // 11b. Mark test files and update test coverage
+    let test_file_paths: Vec<String> = kept_nodes
+        .iter()
+        .filter(|n| n.kind == "File" && crate::resolver::is_test_path(&n.path))
+        .map(|n| n.path.clone())
+        .collect();
+    // Also mark function/class nodes from test paths
+    let test_node_paths: Vec<String> = kept_nodes
+        .iter()
+        .filter(|n| crate::resolver::is_test_path(&n.path))
+        .map(|n| n.path.clone())
+        .collect();
+    let all_test_paths: std::collections::HashSet<String> = test_file_paths
+        .into_iter()
+        .chain(test_node_paths)
+        .collect();
+    db.mark_test_files(&all_test_paths.into_iter().collect::<Vec<_>>())?;
+    db.update_test_coverage()?;
 
     // 12. Update tags for changed/deleted files
     let changed_paths_vec: Vec<String> = changed_paths.iter().cloned().collect();

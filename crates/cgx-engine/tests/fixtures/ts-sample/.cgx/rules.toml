@@ -1,0 +1,10 @@
+[[rules]]
+name = "no-circular-dependencies"
+built_in = "no_cycles"
+severity = "error"
+
+[[rules]]
+name = "test-rule-always-passes"
+description = "This rule always passes"
+severity = "warning"
+query = "SELECT 1 WHERE 1=0"

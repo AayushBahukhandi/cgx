@@ -3,6 +3,23 @@ use std::path::Path;
 
 use crate::parser::{EdgeDef, EdgeKind, NodeDef, NodeKind};
 
+/// Returns true if the given relative file path looks like a test file.
+pub fn is_test_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.contains("/test/")
+        || lower.contains("/tests/")
+        || lower.contains("/__tests__/")
+        || lower.contains("/spec/")
+        || lower.ends_with(".test.ts")
+        || lower.ends_with(".spec.ts")
+        || lower.ends_with(".test.js")
+        || lower.ends_with(".spec.js")
+        || lower.ends_with(".test.tsx")
+        || lower.ends_with(".spec.tsx")
+        || lower.ends_with("_test.py")
+        || lower.ends_with("_test.rs")
+}
+
 pub fn resolve(
     nodes: &[NodeDef],
     edges: &[EdgeDef],
@@ -31,6 +48,21 @@ pub fn resolve(
     // Create file node IDs we know about
     let known_file_ids: HashSet<String> =
         file_paths.iter().map(|p| format!("file:{}", p)).collect();
+
+    // Build a set of test-file paths for CALLS→TESTS reclassification
+    let test_paths: HashSet<&str> = nodes
+        .iter()
+        .filter(|n| is_test_path(&n.path))
+        .map(|n| n.path.as_str())
+        .collect();
+
+    // Also test source IDs (fn:/cls: nodes whose path is a test file)
+    let test_node_ids: HashSet<&str> = nodes
+        .iter()
+        .filter(|n| is_test_path(&n.path))
+        .map(|n| n.id.as_str())
+        .collect();
+    let _ = test_paths; // used via test_node_ids
 
     // Process all edges
     for edge in edges {
@@ -98,16 +130,34 @@ pub fn resolve(
                 }
             }
             EdgeKind::Calls | EdgeKind::Inherits => {
+                // If source node is from a test file and destination is not, use TESTS edge
+                let src_is_test = test_node_ids.contains(edge.src.as_str());
+
                 // If dst is a valid node ID, keep it. Otherwise try to resolve by name.
                 if node_ids.contains(edge.dst.as_str()) {
-                    resolved_edges.push(edge.clone());
+                    let dst_is_test = test_node_ids.contains(edge.dst.as_str());
+                    let kind = if src_is_test && !dst_is_test {
+                        EdgeKind::Tests
+                    } else {
+                        edge.kind.clone()
+                    };
+                    resolved_edges.push(EdgeDef {
+                        kind,
+                        ..edge.clone()
+                    });
                 } else if let Some(targets) = export_index.get(&edge.dst) {
-                    // Found matching names - create CALLS edges with lower confidence
+                    // Found matching names - create CALLS (or TESTS) edges with lower confidence
                     for target_id in targets {
+                        let dst_is_test = test_node_ids.contains(target_id.as_str());
+                        let kind = if src_is_test && !dst_is_test {
+                            EdgeKind::Tests
+                        } else {
+                            EdgeKind::Calls
+                        };
                         resolved_edges.push(EdgeDef {
                             src: edge.src.clone(),
                             dst: target_id.clone(),
-                            kind: EdgeKind::Calls,
+                            kind,
                             confidence: 0.8,
                             ..Default::default()
                         });

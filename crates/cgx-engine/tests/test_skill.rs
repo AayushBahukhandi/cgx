@@ -44,6 +44,10 @@ fn make_node(
         exported: false,
         is_dead_candidate: false,
         dead_reason: None,
+        complexity: 0.0,
+        is_test_file: false,
+        test_count: 0,
+        is_tested: false,
     }
 }
 

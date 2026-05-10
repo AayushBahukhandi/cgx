@@ -110,6 +110,10 @@ fn query_nodes(db: &GraphDb, sql: &str) -> anyhow::Result<Vec<Node>> {
             exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
             is_dead_candidate: false,
             dead_reason: None,
+            complexity: 0.0,
+            is_test_file: false,
+            test_count: 0,
+            is_tested: false,
         })
     })?;
     let mut result = Vec::new();

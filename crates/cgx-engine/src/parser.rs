@@ -65,6 +65,7 @@ pub enum EdgeKind {
     CoChanges,
     Owns,
     DependsOn,
+    Tests,
 }
 
 impl EdgeKind {
@@ -77,6 +78,7 @@ impl EdgeKind {
             EdgeKind::CoChanges => "CO_CHANGES",
             EdgeKind::Owns => "OWNS",
             EdgeKind::DependsOn => "DEPENDS_ON",
+            EdgeKind::Tests => "TESTS",
         }
     }
 }

@@ -15,3 +15,8 @@ export function hashPassword(password: string): string {
 }
 function _neverCalledPrivate(): void { console.log("dead"); }
 export function unusedExportedHelper(x: number): number { return x * 2; }
+
+// Duplicate of hashPassword for testing clone detection
+export function encryptPassword(password: string): string {
+  return Buffer.from(password).toString('base64');
+}

@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use cgx_engine::{
-    analyze_repo, export_dot, export_graphml, export_json, export_mermaid, export_svg, resolve,
-    run_clustering, walk_repo, Edge, EdgeKind, GraphDb, Node, NodeKind, ParserRegistry, Registry,
-    RepoEntry, TagRow,
+    analyze_repo, build_timeline, detect_clones, export_dot, export_graphml, export_json,
+    export_mermaid, export_svg, resolve, run_clustering, walk_repo, ClonePair, Edge, EdgeKind,
+    GraphDb, Node, NodeKind, ParserRegistry, Registry, RepoEntry, TagRow,
 };
 
 use tui::{App, AppMode, GraphWidget};
@@ -218,13 +218,114 @@ enum Commands {
         #[arg(long)]
         repo: Option<PathBuf>,
 
-        /// Filter by annotation type (TODO, FIXME, HACK, NOTE, BUG, OPTIMIZE, WARN, XXX)
+        /// Filter by annotation kind (TODO, FIXME, HACK, NOTE, BUG, OPTIMIZE, WARN, XXX)
         #[arg(long)]
-        tag: Option<String>,
+        kind: Option<String>,
 
         /// Filter by comment source: code, jsx, or jsx_commented_code
         #[arg(long)]
+        comment_type: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show documentation coverage for exported functions
+    Docs {
+        #[command(subcommand)]
+        cmd: DocsCmd,
+    },
+    /// Show high-complexity functions
+    Complexity {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// Number of results to show
+        #[arg(long, default_value = "20")]
+        top: usize,
+
+        /// Minimum complexity score (0.0-1.0)
+        #[arg(long)]
+        threshold: Option<f64>,
+    },
+    /// Find duplicate or cloned functions
+    Dupes {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// Similarity threshold (0.0-1.0, default 0.80)
+        #[arg(long, default_value = "0.80")]
+        threshold: f64,
+
+        /// Filter by kind: exact or near
+        #[arg(long)]
         kind: Option<String>,
+    },
+    /// Show test coverage and untested functions
+    Test {
+        #[command(subcommand)]
+        cmd: TestCmd,
+    },
+    /// Generate architecture explanations for symbols, folders, or the whole repo
+    Explain {
+        /// Symbol name, file path, or leave empty for folder/repo
+        target: Option<String>,
+
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// Explain a specific community cluster
+        #[arg(long)]
+        community: Option<i64>,
+
+        /// Generate full onboarding guide for the repo
+        #[arg(long)]
+        onboard: bool,
+
+        /// Write output to this file instead of stdout
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Check or manage architecture fitness rules
+    Rules {
+        #[command(subcommand)]
+        cmd: RulesCmd,
+    },
+    /// Generate a structured review brief for a PR or commit range
+    Review {
+        /// Commit ref, branch, or commit range (e.g. HEAD~5, main, abc..def)
+        #[arg(default_value = "HEAD~1")]
+        commit: String,
+
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// Output format: text, markdown, github-actions
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Show dependency health and CVE status
+    Deps {
+        #[command(subcommand)]
+        cmd: DepsCmd,
+    },
+    /// Show codebase evolution over recent commits
+    Timeline {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// Number of commits to include (default 20)
+        #[arg(long, default_value = "20")]
+        commits: usize,
+
+        /// Only include commits after this date (YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
 
         /// Output as JSON
         #[arg(long)]
@@ -315,6 +416,85 @@ enum QueryCmd {
         summary: bool,
         #[arg(long)]
         safe_to_delete: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DocsCmd {
+    /// Show documentation coverage for exported functions and classes
+    Coverage {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RulesCmd {
+    /// Run all architecture rules and report violations
+    Check {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Only run this specific rule by name
+        #[arg(long)]
+        rule: Option<String>,
+        /// Output format: text, github-actions
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// List all defined rules
+    List {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DepsCmd {
+    /// Show full dependency health report with CVE information
+    Health {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Only show packages with CVEs
+        #[arg(long)]
+        critical: bool,
+    },
+    /// Quick CVE count for each dependency
+    Audit {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+    /// Show packages with newer versions available
+    Outdated {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TestCmd {
+    /// Show overall test coverage statistics
+    Coverage {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+    /// Show untested high-coupling functions ranked by risk
+    Gaps {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+    /// Suggest which tests to write first (prioritized by risk)
+    Suggest {
+        /// Path to the repository
+        #[arg(long)]
+        repo: Option<PathBuf>,
     },
 }
 
@@ -483,12 +663,105 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Todos {
             repo,
-            tag,
             kind,
+            comment_type,
             json,
         } => {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
-            cmd_todos(&repo_path, tag.as_deref(), kind.as_deref(), json)
+            let kind_uc = kind.as_deref().map(|t| t.to_uppercase());
+            cmd_todos(
+                &repo_path,
+                kind_uc.as_deref(),
+                comment_type.as_deref(),
+                json,
+            )
+        }
+        Commands::Docs { cmd } => match cmd {
+            DocsCmd::Coverage { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_docs_coverage(&repo_path)
+            }
+        },
+        Commands::Complexity {
+            repo,
+            top,
+            threshold,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            cmd_complexity(&repo_path, top, threshold)
+        }
+        Commands::Dupes {
+            repo,
+            threshold,
+            kind,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            cmd_dupes(&repo_path, threshold, kind.as_deref())
+        }
+        Commands::Explain {
+            target,
+            repo,
+            community,
+            onboard,
+            out,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            cmd_explain(&repo_path, target.as_deref(), community, onboard, out.as_deref())
+        }
+        Commands::Rules { cmd } => match cmd {
+            RulesCmd::Check { repo, rule, format } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_rules_check(&repo_path, rule.as_deref(), &format)
+            }
+            RulesCmd::List { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_rules_list(&repo_path)
+            }
+        },
+        Commands::Review {
+            commit,
+            repo,
+            format,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            cmd_review(&repo_path, &commit, &format)
+        }
+        Commands::Deps { cmd } => match cmd {
+            DepsCmd::Health { repo, critical } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_deps_health(&repo_path, critical)
+            }
+            DepsCmd::Audit { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_deps_audit(&repo_path)
+            }
+            DepsCmd::Outdated { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_deps_outdated(&repo_path)
+            }
+        },
+        Commands::Test { cmd } => match cmd {
+            TestCmd::Coverage { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_test_coverage(&repo_path)
+            }
+            TestCmd::Gaps { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_test_gaps(&repo_path)
+            }
+            TestCmd::Suggest { repo } => {
+                let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+                cmd_test_suggest(&repo_path)
+            }
+        },
+        Commands::Timeline {
+            repo,
+            commits,
+            since,
+            json,
+        } => {
+            let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
+            cmd_timeline(&repo_path, commits, since.as_deref(), json)
         }
         Commands::Doctor {} => cmd_doctor(),
         Commands::Clean { path, all } => {
@@ -769,6 +1042,21 @@ fn cmd_analyze(
     let _ = db.upsert_nodes(&db_nodes)?;
     let _ = db.upsert_edges(&db_edges)?;
 
+    // Update doc_comment for nodes that have it in metadata
+    for result in &results {
+        for node_def in &result.nodes {
+            if let Some(doc) = node_def
+                .metadata
+                .get("doc_comment")
+                .and_then(|v| v.as_str())
+            {
+                if !doc.is_empty() {
+                    let _ = db.update_node_doc_comment(&node_def.id, doc);
+                }
+            }
+        }
+    }
+
     // Store comment annotation tags (TODO/FIXME/HACK/etc.) extracted from all files
     let tag_rows: Vec<TagRow> = results
         .iter()
@@ -788,6 +1076,17 @@ fn cmd_analyze(
     let tag_count = db.upsert_tags(&tag_rows)?;
 
     db.update_in_out_degrees()?;
+
+    // Mark test files and update test coverage
+    {
+        let test_paths: Vec<String> = files
+            .iter()
+            .filter(|f| cgx_engine::resolver::is_test_path(&f.relative_path))
+            .map(|f| f.relative_path.clone())
+            .collect();
+        let _ = db.mark_test_files(&test_paths);
+        let _ = db.update_test_coverage();
+    }
 
     if !quiet {
         println!(
@@ -852,6 +1151,10 @@ fn cmd_analyze(
                                 exported: false,
                                 is_dead_candidate: false,
                                 dead_reason: None,
+                                complexity: 0.0,
+                                is_test_file: false,
+                                test_count: 0,
+                                is_tested: false,
                             });
                             seen_authors.insert(email.clone(), name.clone());
                         }
@@ -3543,6 +3846,166 @@ fn cmd_query_dead_code(
     Ok(())
 }
 
+fn cmd_docs_coverage(repo_path: &Path) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let db = GraphDb::open(&canonical)?;
+
+    let (overall_pct, by_community, undocumented) = db
+        .get_docs_coverage()
+        .context("Failed to compute docs coverage")?;
+
+    println!();
+    println!("  DOCUMENTATION COVERAGE");
+    println!("  {}", "\u{2500}".repeat(60));
+    println!("  Overall: {:.1}% of exported functions/classes documented", overall_pct);
+    println!();
+
+    if !by_community.is_empty() {
+        println!("  BY COMMUNITY");
+        println!(
+            "  {:<10}  {:>10}  {:>10}  {:>8}",
+            "Community", "Documented", "Total", "Coverage"
+        );
+        println!("  {}", "\u{2500}".repeat(46));
+        for (community, documented, total) in &by_community {
+            if *total == 0 {
+                continue;
+            }
+            let pct = (*documented as f64 / *total as f64) * 100.0;
+            println!(
+                "  {:<10}  {:>10}  {:>10}  {:>7.1}%",
+                community, documented, total, pct
+            );
+        }
+        println!();
+    }
+
+    if !undocumented.is_empty() {
+        println!("  UNDOCUMENTED HIGH-COUPLING FUNCTIONS (top by callers)");
+        println!(
+            "  {:<30}  {:<35}  {:>7}",
+            "Function", "File", "Callers"
+        );
+        println!("  {}", "\u{2500}".repeat(76));
+        for node in &undocumented {
+            println!(
+                "  {:<30}  {:<35}  {:>7}",
+                truncate_path(&node.name, 30),
+                truncate_path(&node.path, 35),
+                node.in_degree
+            );
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+fn cmd_complexity(
+    repo_path: &Path,
+    top: usize,
+    threshold: Option<f64>,
+) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let db = GraphDb::open(&canonical)?;
+
+    let min_score = threshold.unwrap_or(0.0);
+    let nodes = db
+        .get_nodes_by_complexity(top, min_score)
+        .context("Failed to query complexity")?;
+
+    if nodes.is_empty() {
+        println!("  No functions found with complexity >= {:.2}. Run `cgx analyze` first.", min_score);
+        return Ok(());
+    }
+
+    println!();
+    println!("  COMPLEXITY HOTSPOTS \u{2014} top {} functions", nodes.len());
+    println!("  {}", "\u{2500}".repeat(70));
+    println!(
+        "  {:<3}  {:<28}  {:<30}  {:>8}",
+        "#", "Function", "File", "Score"
+    );
+
+    for (i, node) in nodes.iter().enumerate() {
+        println!(
+            "  {:<3}  {:<28}  {:<30}  {:>7.3}",
+            i + 1,
+            truncate_path(&node.name, 28),
+            truncate_path(&node.path, 30),
+            node.complexity
+        );
+    }
+
+    println!();
+    Ok(())
+}
+
+fn cmd_dupes(
+    repo_path: &Path,
+    threshold: f64,
+    kind_filter: Option<&str>,
+) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let db = GraphDb::open(&canonical)?;
+
+    let all_nodes = db.get_all_nodes().context("Failed to load nodes")?;
+    let pairs = detect_clones(&all_nodes, &canonical, threshold)
+        .context("Failed to detect clones")?;
+
+    // Filter by kind if requested
+    let filtered: Vec<&ClonePair> = pairs
+        .iter()
+        .filter(|p| {
+            if let Some(k) = kind_filter {
+                p.kind.as_str() == k
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        println!("  No duplicate functions found with threshold {:.2}.", threshold);
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "  DUPLICATE FUNCTIONS \u{2014} {} pair(s) (threshold {:.0}%)",
+        filtered.len(),
+        threshold * 100.0
+    );
+    println!("  {}", "\u{2500}".repeat(80));
+    println!(
+        "  {:<8}  {:<25}  {:<30}  {:<5}  {:<25}  {:<30}",
+        "Kind", "Function A", "File A", "Line", "Function B", "File B"
+    );
+    println!("  {}", "\u{2500}".repeat(130));
+
+    for pair in &filtered {
+        println!(
+            "  {:<8}  {:<25}  {:<30}  {:<5}  {:<25}  {:<30}  ({:.0}%)",
+            pair.kind.as_str(),
+            truncate_path(&pair.node_a_name, 25),
+            truncate_path(&pair.node_a_path, 30),
+            pair.node_a_line,
+            truncate_path(&pair.node_b_name, 25),
+            truncate_path(&pair.node_b_path, 30),
+            pair.similarity * 100.0
+        );
+    }
+
+    println!();
+    Ok(())
+}
+
 fn cmd_todos(
     repo_path: &Path,
     tag_filter: Option<&str>,
@@ -3584,6 +4047,960 @@ fn cmd_todos(
     }
     println!();
     println!("  {} annotation(s) found.", tags.len());
+    Ok(())
+}
+
+// ── Test Coverage ────────────────────────────────────────────────────────
+
+fn cmd_test_coverage(repo_path: &Path) -> anyhow::Result<()> {
+    let db = GraphDb::open(&resolve_repo(Some(repo_path.to_path_buf())))?;
+    let (pct, tested, untested, _gaps) = db.get_test_coverage_summary(0)?;
+
+    println!("  TEST COVERAGE");
+    println!("  {}", "─".repeat(60));
+    println!(
+        "  Overall: {:.1}% of functions/classes have test coverage",
+        pct
+    );
+    println!("  Tested:   {}", tested);
+    println!("  Untested: {}", untested);
+    println!();
+
+    let tests_edge_count: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM edges WHERE kind = 'TESTS'", [], |r| {
+            r.get(0)
+        })
+        .unwrap_or(0);
+    if tests_edge_count == 0 {
+        println!("  No TESTS edges found. Add test files (*.test.ts, __tests__/*.ts, etc.)");
+        println!("  and run `cgx analyze --force` to detect test coverage.");
+    } else {
+        println!("  TESTS edges: {}", tests_edge_count);
+    }
+
+    Ok(())
+}
+
+fn cmd_test_gaps(repo_path: &Path) -> anyhow::Result<()> {
+    let db = GraphDb::open(&resolve_repo(Some(repo_path.to_path_buf())))?;
+    let (pct, _tested, _untested, gaps) = db.get_test_coverage_summary(20)?;
+
+    println!("  TEST COVERAGE GAPS — ranked by risk (untested × coupling × churn)");
+    println!("  {}", "─".repeat(74));
+
+    if gaps.is_empty() {
+        println!("  All functions have test coverage! ({:.1}% overall)", pct);
+        return Ok(());
+    }
+
+    let header = format!(
+        "  {:<30}  {:<30}  {:>7}  {:>5}  Risk",
+        "Function", "File", "Callers", "Churn"
+    );
+    println!("{}", header);
+    println!("  {}", "─".repeat(74));
+
+    for node in &gaps {
+        let risk_score = 1.0 - (1.0 - node.churn) * (1.0 - node.coupling);
+        let risk_label = if risk_score > 0.7 {
+            "HIGH"
+        } else if risk_score > 0.4 {
+            "MEDIUM"
+        } else {
+            "LOW"
+        };
+        println!(
+            "  {:<30}  {:<30}  {:>7}  {:>5.2}  {}",
+            node.name,
+            node.path,
+            node.in_degree,
+            node.churn,
+            risk_label
+        );
+    }
+    println!();
+    println!("  {} untested function(s) found.", gaps.len());
+
+    Ok(())
+}
+
+fn cmd_test_suggest(repo_path: &Path) -> anyhow::Result<()> {
+    let db = GraphDb::open(&resolve_repo(Some(repo_path.to_path_buf())))?;
+    let (_pct, _tested, _untested, gaps) = db.get_test_coverage_summary(10)?;
+
+    println!("  SUGGESTED TESTS — write these first");
+    println!("  {}", "─".repeat(74));
+
+    if gaps.is_empty() {
+        println!("  All functions have test coverage!");
+        return Ok(());
+    }
+
+    for (i, node) in gaps.iter().enumerate() {
+        let test_dir = if node.path.contains('/') {
+            format!(
+                "tests/{}.test.ts",
+                node.path.trim_end_matches(".ts").trim_end_matches(".tsx")
+            )
+        } else {
+            format!("tests/{}.test.ts", node.name.to_lowercase())
+        };
+        println!(
+            "  {}. {} ({}:{})",
+            i + 1,
+            node.name,
+            node.path,
+            node.line_start
+        );
+        println!(
+            "     Why: {} callers, churn {:.2}, 0 existing tests",
+            node.in_degree, node.churn
+        );
+        println!("     Suggested test file: {}", test_dir);
+        println!();
+    }
+
+    Ok(())
+}
+
+// ── Explain ──────────────────────────────────────────────────────────────
+
+fn cmd_explain(
+    repo_path: &Path,
+    target: Option<&str>,
+    community: Option<i64>,
+    onboard: bool,
+    out: Option<&Path>,
+) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let db = GraphDb::open(&canonical)?;
+
+    let output = if onboard {
+        generate_onboard_doc(&db)?
+    } else if let Some(comm_id) = community {
+        generate_community_doc(&db, comm_id)?
+    } else if let Some(target_str) = target {
+        // Try as symbol name first, then as folder path
+        generate_symbol_doc(&db, target_str)
+            .or_else(|_| generate_folder_doc(&db, target_str))?
+    } else {
+        generate_onboard_doc(&db)?
+    };
+
+    match out {
+        Some(out_path) => {
+            std::fs::write(out_path, &output)?;
+            println!("  Written to {}", out_path.display());
+        }
+        None => print!("{}", output),
+    }
+
+    Ok(())
+}
+
+fn generate_symbol_doc(db: &GraphDb, symbol: &str) -> anyhow::Result<String> {
+    let nodes = db.get_all_nodes()?;
+    let node = nodes
+        .iter()
+        .find(|n| n.name == symbol || n.id.contains(symbol))
+        .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found", symbol))?;
+
+    let all_edges = db.get_all_edges()?;
+    let callers: Vec<_> = all_edges
+        .iter()
+        .filter(|e| e.dst == node.id && matches!(e.kind.as_str(), "CALLS" | "TESTS"))
+        .collect();
+    let callees: Vec<_> = all_edges
+        .iter()
+        .filter(|e| e.src == node.id && e.kind == "CALLS")
+        .collect();
+
+    // Get tags for this file
+    let tags = db.get_tags(None, None)?;
+    let file_tags: Vec<_> = tags
+        .iter()
+        .filter(|t| t.file_path == node.path)
+        .collect();
+
+    let mut out = String::new();
+    out.push_str(&format!("## {}\n\n", node.name));
+    out.push_str(&format!(
+        "**Kind:** {}  **File:** {}:{}–{}  **Community:** #{}\n",
+        node.kind, node.path, node.line_start, node.line_end, node.community
+    ));
+    out.push_str(&format!(
+        "**Churn:** {:.2}  **Coupling:** {:.2}  **Complexity:** {:.2}\n\n",
+        node.churn, node.coupling, node.complexity
+    ));
+
+    if !callers.is_empty() {
+        out.push_str(&format!("**What depends on it ({} callers):**\n", callers.len()));
+        for caller in callers.iter().take(10) {
+            if let Some(caller_node) = nodes.iter().find(|n| n.id == caller.src) {
+                out.push_str(&format!(
+                    "- {} ({}: {}:{})\n",
+                    caller_node.name, caller_node.kind, caller_node.path, caller_node.line_start
+                ));
+            }
+        }
+        out.push('\n');
+    }
+
+    if !callees.is_empty() {
+        out.push_str(&format!("**What it depends on ({} dependencies):**\n", callees.len()));
+        for callee in callees.iter().take(10) {
+            if let Some(callee_node) = nodes.iter().find(|n| n.id == callee.dst) {
+                out.push_str(&format!(
+                    "- {} ({}: {}:{})\n",
+                    callee_node.name, callee_node.kind, callee_node.path, callee_node.line_start
+                ));
+            }
+        }
+        out.push('\n');
+    }
+
+    if !file_tags.is_empty() {
+        out.push_str("**Open TODOs:**\n");
+        for tag in &file_tags {
+            out.push_str(&format!(
+                "- Line {}: {} ({})\n",
+                tag.line,
+                tag.text.lines().next().unwrap_or("").trim(),
+                tag.tag_type
+            ));
+        }
+        out.push('\n');
+    }
+
+    Ok(out)
+}
+
+fn generate_folder_doc(db: &GraphDb, folder_path: &str) -> anyhow::Result<String> {
+    let folder = folder_path.trim_end_matches('/');
+    let nodes = db.get_all_nodes()?;
+    let folder_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.path.starts_with(folder) && n.kind != "Author")
+        .collect();
+
+    if folder_nodes.is_empty() {
+        return Err(anyhow::anyhow!("No nodes found under '{}'", folder));
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("## Folder: {}/\n\n", folder));
+    out.push_str(&format!("**Total nodes:** {}\n\n", folder_nodes.len()));
+
+    // Show exported symbols
+    let exported: Vec<_> = folder_nodes
+        .iter()
+        .filter(|n| n.exported && matches!(n.kind.as_str(), "Function" | "Class"))
+        .collect();
+    if !exported.is_empty() {
+        out.push_str("**Exported symbols:**\n");
+        for node in exported.iter().take(15) {
+            out.push_str(&format!(
+                "- {} `{}` ({}:{}) — {} callers\n",
+                node.kind, node.name, node.path, node.line_start, node.in_degree
+            ));
+        }
+        out.push('\n');
+    }
+
+    // Top 3 hotspots
+    let mut hotspots: Vec<_> = folder_nodes
+        .iter()
+        .filter(|n| n.churn > 0.0)
+        .collect();
+    hotspots.sort_by(|a, b| {
+        let score_a = a.churn * a.coupling;
+        let score_b = b.churn * b.coupling;
+        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    if !hotspots.is_empty() {
+        out.push_str("**Top 3 hotspots:**\n");
+        for node in hotspots.iter().take(3) {
+            out.push_str(&format!(
+                "- `{}` — churn {:.2}, coupling {:.2}\n",
+                node.name, node.churn, node.coupling
+            ));
+        }
+        out.push('\n');
+    }
+
+    Ok(out)
+}
+
+fn generate_community_doc(db: &GraphDb, community_id: i64) -> anyhow::Result<String> {
+    let nodes = db.get_nodes_by_community(community_id)?;
+    if nodes.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Community #{} not found",
+            community_id
+        ));
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("## Community #{}\n\n", community_id));
+    out.push_str(&format!("**Nodes:** {}\n\n", nodes.len()));
+
+    // Find the "center" file (most common path)
+    let mut path_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for n in &nodes {
+        *path_counts.entry(&n.path).or_default() += 1;
+    }
+    if let Some((main_path, _)) = path_counts.iter().max_by_key(|(_, c)| *c) {
+        out.push_str(&format!("**Main file:** {}\n\n", main_path));
+    }
+
+    out.push_str("**Top nodes by callers:**\n");
+    let mut sorted = nodes.clone();
+    sorted.sort_by_key(|n| std::cmp::Reverse(n.in_degree));
+    for node in sorted.iter().take(10) {
+        out.push_str(&format!(
+            "- {} `{}` — {} callers\n",
+            node.kind, node.name, node.in_degree
+        ));
+    }
+
+    Ok(out)
+}
+
+fn generate_onboard_doc(db: &GraphDb) -> anyhow::Result<String> {
+    let stats = db.get_stats()?;
+    let all_edges = db.get_all_edges()?;
+
+    let mut out = String::new();
+    out.push_str("# Architecture Overview\n\n");
+
+    // Section 1: Overview
+    out.push_str("## 1. Repository Overview\n\n");
+    let lang_list: Vec<String> = stats
+        .language_breakdown
+        .iter()
+        .filter(|(_, pct)| **pct > 0.01)
+        .map(|(lang, pct)| format!("{} ({:.0}%)", lang, pct * 100.0))
+        .collect();
+    out.push_str(&format!(
+        "- **Languages:** {}\n",
+        if lang_list.is_empty() {
+            "unknown".to_string()
+        } else {
+            lang_list.join(", ")
+        }
+    ));
+    out.push_str(&format!("- **Nodes:** {} total ({} functions, {} classes, {} files)\n",
+        stats.node_count, stats.function_count, stats.class_count, stats.file_count));
+    out.push_str(&format!("- **Edges:** {}\n", stats.edge_count));
+    out.push_str(&format!("- **Communities:** {}\n\n", stats.community_count));
+
+    // Section 2: Entry Points
+    out.push_str("## 2. Entry Points\n\n");
+    let entry_points = db.get_entry_points(5)?;
+    if entry_points.is_empty() {
+        out.push_str("No clear entry points detected.\n\n");
+    } else {
+        for ep in &entry_points {
+            out.push_str(&format!(
+                "- `{}` ({}) — {} outgoing calls\n",
+                ep.name, ep.path, ep.out_degree
+            ));
+        }
+        out.push('\n');
+    }
+
+    // Section 3: Most Important Symbols
+    out.push_str("## 3. Most Important Symbols\n\n");
+    let god_nodes = db.get_god_nodes(5)?;
+    for gn in &god_nodes {
+        out.push_str(&format!(
+            "- `{}` ({}) in `{}` — {} callers\n",
+            gn.name, gn.kind, gn.path, gn.in_degree
+        ));
+    }
+    out.push('\n');
+
+    // Section 4: Hotspots
+    out.push_str("## 4. Hotspots (High Risk Files)\n\n");
+    let hotspots = db.get_hotspots(5)?;
+    if hotspots.is_empty() {
+        out.push_str("No hotspots detected (may need git history).\n\n");
+    } else {
+        for (path, churn, coupling, callers) in &hotspots {
+            out.push_str(&format!(
+                "- `{}` — churn {:.2}, coupling {:.2}, {} callers\n",
+                path, churn, coupling, callers
+            ));
+        }
+        out.push('\n');
+    }
+
+    // Section 5: Technical Debt (TODOs)
+    out.push_str("## 5. Technical Debt\n\n");
+    let tags = db.get_tags(None, None)?;
+    if tags.is_empty() {
+        out.push_str("No TODO/FIXME comments found.\n\n");
+    } else {
+        for tag in tags.iter().take(10) {
+            out.push_str(&format!(
+                "- **{}** in `{}` line {}: {}\n",
+                tag.tag_type,
+                tag.file_path,
+                tag.line,
+                tag.text.lines().next().unwrap_or("").trim()
+            ));
+        }
+        out.push('\n');
+    }
+
+    // Section 6: Ownership
+    out.push_str("## 6. Code Ownership\n\n");
+    let owners = db.get_ownership()?;
+    if owners.is_empty() {
+        out.push_str("No ownership data (may need git history).\n\n");
+    } else {
+        for (owner, files) in owners.iter().take(5) {
+            out.push_str(&format!("- {} owns {} file(s)\n", owner, files));
+        }
+        out.push('\n');
+    }
+
+    // Section 7: Test Coverage Gaps
+    out.push_str("## 7. Testing Gaps\n\n");
+    let (pct, _tested, _untested, gaps) = db.get_test_coverage_summary(5)?;
+    out.push_str(&format!("Overall test coverage: {:.1}%\n\n", pct));
+    if gaps.is_empty() {
+        out.push_str("No obvious test gaps detected.\n\n");
+    } else {
+        let tests_edges: usize = all_edges.iter().filter(|e| e.kind == "TESTS").count();
+        if tests_edges == 0 {
+            out.push_str("No test files detected. Add test files to enable coverage analysis.\n\n");
+        } else {
+            for gap in &gaps {
+                out.push_str(&format!(
+                    "- `{}` ({}) — {} callers, no test coverage\n",
+                    gap.name, gap.path, gap.in_degree
+                ));
+            }
+            out.push('\n');
+        }
+    }
+
+    Ok(out)
+}
+
+// ── Architecture Rules ───────────────────────────────────────────────────
+
+fn cmd_rules_check(repo_path: &Path, rule_filter: Option<&str>, format: &str) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let db = GraphDb::open(&canonical)?;
+    let config = cgx_engine::RulesConfig::load(&canonical)?;
+
+    if config.rules.is_empty() {
+        println!("  No rules defined. Create .cgx/rules.toml to add architecture rules.");
+        println!("  See: cgx rules list for examples.");
+        return Ok(());
+    }
+
+    let results = cgx_engine::run_rules(&db, &config.rules, rule_filter);
+
+    let error_count = results.iter().filter(|r| !r.passed() && r.rule.severity == "error").count();
+    let warning_count = results.iter().filter(|r| !r.passed() && r.rule.severity == "warning").count();
+
+    match format {
+        "github-actions" => {
+            for result in &results {
+                for v in &result.violations {
+                    let level = if v.severity == "error" { "error" } else { "warning" };
+                    let file_part = v.file.as_deref().map(|f| format!("file={},", f)).unwrap_or_default();
+                    println!(
+                        "::{} {}title=cgx Rule {}::{}",
+                        level, file_part, v.rule_name, v.message
+                    );
+                }
+            }
+        }
+        _ => {
+            println!(
+                "  ARCHITECTURE RULES \u{2014} {} defined",
+                config.rules.len()
+            );
+            println!("  {}", "\u{2500}".repeat(70));
+
+            for result in &results {
+                let icon = if result.error.is_some() {
+                    "?"
+                } else if result.passed() {
+                    "\u{2713}"
+                } else {
+                    "\u{2717}"
+                };
+                let severity_label = if !result.passed() {
+                    format!(" {}", result.rule.severity.to_uppercase())
+                } else {
+                    String::new()
+                };
+
+                println!(
+                    "  {}  {:<50} ({} violations){}",
+                    icon,
+                    result.rule.name,
+                    result.violations.len(),
+                    severity_label
+                );
+
+                if let Some(ref err) = result.error {
+                    println!("    ERROR: {}", err);
+                }
+
+                for v in result.violations.iter().take(5) {
+                    let file_prefix = v
+                        .file
+                        .as_deref()
+                        .map(|f| format!("{}: ", f))
+                        .unwrap_or_default();
+                    println!("    {}{}", file_prefix, v.message);
+                }
+            }
+
+            println!();
+            if error_count > 0 {
+                println!(
+                    "  Result: FAIL ({} error(s), {} warning(s))",
+                    error_count, warning_count
+                );
+            } else if warning_count > 0 {
+                println!("  Result: PASS with {} warning(s)", warning_count);
+            } else {
+                println!("  Result: PASS \u{2014} all rules satisfied");
+            }
+        }
+    }
+
+    if error_count > 0 {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn cmd_rules_list(repo_path: &Path) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let config = cgx_engine::RulesConfig::load(&canonical)?;
+
+    if config.rules.is_empty() {
+        println!("  No rules defined. Create .cgx/rules.toml to add rules.");
+        return Ok(());
+    }
+
+    println!("  RULES ({})", config.rules.len());
+    println!("  {}", "\u{2500}".repeat(70));
+    for rule in &config.rules {
+        let kind = if rule.built_in.is_some() { "built-in" } else { "sql" };
+        println!(
+            "  [{:<8}] [{:<8}] {}",
+            kind, rule.severity, rule.name
+        );
+        if !rule.description.is_empty() {
+            println!("             {}", rule.description);
+        }
+    }
+
+    Ok(())
+}
+
+// ── PR Review ────────────────────────────────────────────────────────────
+
+fn cmd_review(repo_path: &Path, commit_ref: &str, format: &str) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
+    let git_repo = git2::Repository::open(&canonical)
+        .context("Not a git repository. Run cgx analyze first.")?;
+
+    // Parse commit range
+    let (old_commit, new_commit) = resolve_commit_range(&git_repo, commit_ref)?;
+
+    // Get diff between old and new trees
+    let old_tree = old_commit.tree().context("Failed to get old tree")?;
+    let new_tree = new_commit.tree().context("Failed to get new tree")?;
+
+    let diff = git_repo
+        .diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)
+        .context("Failed to compute diff")?;
+
+    let mut changed_paths: Vec<String> = Vec::new();
+    diff.foreach(
+        &mut |delta, _| {
+            if let Some(path) = delta.new_file().path().and_then(|p| p.to_str()) {
+                changed_paths.push(path.to_string());
+            }
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+
+    // Get ownership info
+    let db = GraphDb::open(&canonical)?;
+
+    // Find changed nodes
+    let all_nodes = db.get_all_nodes()?;
+    let changed_nodes: Vec<&Node> = all_nodes
+        .iter()
+        .filter(|n| changed_paths.contains(&n.path) && n.kind != "Author")
+        .collect();
+
+    // Find suggested reviewers via OWNS edges
+    let owners = db.get_ownership()?;
+    let file_owners: Vec<String> = owners
+        .iter()
+        .filter(|(name, _)| !name.is_empty())
+        .take(3)
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    // Find blast radius — nodes dependent on changed nodes
+    let mut blast_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for node in &changed_nodes {
+        if let Ok(neighbors) = db.get_neighbors(&node.id, 2) {
+            for n in neighbors {
+                if !changed_paths.contains(&n.path) {
+                    blast_set.insert(n.id.clone());
+                }
+            }
+        }
+    }
+
+    // Find hotspot alerts
+    let hotspot_alerts: Vec<&Node> = changed_nodes
+        .iter()
+        .filter(|n| n.churn > 0.7 && n.coupling > 0.6)
+        .copied()
+        .collect();
+
+    // Find missing tests
+    let missing_tests: Vec<&Node> = changed_nodes
+        .iter()
+        .filter(|n| matches!(n.kind.as_str(), "Function" | "Class") && !n.is_tested)
+        .copied()
+        .collect();
+
+    // Find doc gaps
+    let doc_gaps: Vec<&Node> = changed_nodes
+        .iter()
+        .filter(|n| matches!(n.kind.as_str(), "Function" | "Class"))
+        .copied()
+        .collect();
+
+    // Find TODOs in changed files
+    let tags = db.get_tags(None, None)?;
+    let open_todos: Vec<&TagRow> = tags
+        .iter()
+        .filter(|t| changed_paths.contains(&t.file_path))
+        .collect();
+
+    let risk_level = if !hotspot_alerts.is_empty() || blast_set.len() > 20 {
+        "HIGH"
+    } else if blast_set.len() > 5 || !missing_tests.is_empty() {
+        "MEDIUM"
+    } else {
+        "LOW"
+    };
+
+    match format {
+        "markdown" => {
+            println!("## cgx Review Brief");
+            println!();
+            println!("**Risk Level:** {}", risk_level);
+            println!("**Changed Nodes:** {}", changed_nodes.len());
+            println!("**Blast Radius:** {} downstream nodes", blast_set.len());
+            println!();
+            println!("### Changed Nodes");
+            for node in &changed_nodes {
+                println!("- `{}` ({}) — {}", node.name, node.kind, node.path);
+            }
+            if !hotspot_alerts.is_empty() {
+                println!();
+                println!("### ⚠️ Hotspot Alerts");
+                for node in &hotspot_alerts {
+                    println!(
+                        "- `{}` — churn {:.2}, coupling {:.2}",
+                        node.name, node.churn, node.coupling
+                    );
+                }
+            }
+            if !missing_tests.is_empty() {
+                println!();
+                println!("### Missing Tests");
+                for node in &missing_tests {
+                    println!("- `{}` ({}) — no test coverage", node.name, node.path);
+                }
+            }
+            if !file_owners.is_empty() {
+                println!();
+                println!("### Suggested Reviewers");
+                for owner in &file_owners {
+                    println!("- {}", owner);
+                }
+            }
+            if !doc_gaps.is_empty() {
+                println!();
+                println!("### Documentation Gaps");
+                for node in &doc_gaps {
+                    println!("- `{}` — no doc comment", node.name);
+                }
+            }
+            if !open_todos.is_empty() {
+                println!();
+                println!("### Open TODOs in Changed Files");
+                for tag in open_todos.iter().take(5) {
+                    println!("- {} in {} line {}: {}", tag.tag_type, tag.file_path, tag.line, tag.text);
+                }
+            }
+        }
+        "github-actions" => {
+            for node in &hotspot_alerts {
+                println!(
+                    "::warning file={},line={},title=cgx Hotspot Alert::{} has churn {:.2} — high risk modification",
+                    node.path, node.line_start, node.name, node.churn
+                );
+            }
+            for node in &missing_tests {
+                println!(
+                    "::warning file={},line={},title=cgx Missing Test::{} has {} callers and no tests",
+                    node.path, node.line_start, node.name, node.in_degree
+                );
+            }
+            if !blast_set.is_empty() {
+                for node in changed_nodes.iter().take(3) {
+                    println!(
+                        "::error file={},title=cgx Blast Radius::Changing {} affects {} nodes",
+                        node.path, node.name, blast_set.len()
+                    );
+                }
+            }
+        }
+        _ => {
+            // text format
+            println!("  CGX REVIEW BRIEF");
+            println!("  Ref: {}", commit_ref);
+            println!("  Risk Level: {}", risk_level);
+            println!();
+            println!("  CHANGED NODES ({} total)", changed_nodes.len());
+            println!("  {}", "\u{2500}".repeat(60));
+            for node in &changed_nodes {
+                println!("  {} {} — {}", node.kind, node.name, node.path);
+            }
+            println!();
+            println!(
+                "  BLAST RADIUS — {} downstream node(s) affected",
+                blast_set.len()
+            );
+            if !hotspot_alerts.is_empty() {
+                println!();
+                println!("  HOTSPOT ALERTS ({} file(s))", hotspot_alerts.len());
+                println!("  {}", "\u{2500}".repeat(60));
+                for node in &hotspot_alerts {
+                    println!(
+                        "  {} — churn {:.2}, coupling {:.2}",
+                        node.name, node.churn, node.coupling
+                    );
+                }
+            }
+            if !missing_tests.is_empty() {
+                println!();
+                println!("  MISSING TESTS ({} function(s))", missing_tests.len());
+                for node in &missing_tests {
+                    println!("  {} ({}) — no test coverage", node.name, node.path);
+                }
+            }
+            println!();
+            println!("  SUGGESTED REVIEWERS");
+            println!("  {}", "\u{2500}".repeat(60));
+            if file_owners.is_empty() {
+                println!("  (no ownership data — run with git history)");
+            } else {
+                for owner in &file_owners {
+                    println!("  {}", owner);
+                }
+            }
+            if !open_todos.is_empty() {
+                println!();
+                println!("  OPEN TODOS ({} in changed files)", open_todos.len());
+                for tag in open_todos.iter().take(5) {
+                    println!("  {} {}:{} — {}", tag.tag_type, tag.file_path, tag.line, tag.text);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_commit_range<'repo>(
+    repo: &'repo git2::Repository,
+    spec: &str,
+) -> anyhow::Result<(git2::Commit<'repo>, git2::Commit<'repo>)> {
+    // Support HEAD~N, branch name, or commit SHA
+    if let Some((old_spec, new_spec)) = spec.split_once("..") {
+        let old_obj = repo
+            .revparse_single(old_spec)
+            .with_context(|| format!("Cannot resolve ref: {}", old_spec))?;
+        let new_obj = repo
+            .revparse_single(new_spec)
+            .with_context(|| format!("Cannot resolve ref: {}", new_spec))?;
+        let old_commit = old_obj
+            .peel_to_commit()
+            .context("Old ref is not a commit")?;
+        let new_commit = new_obj
+            .peel_to_commit()
+            .context("New ref is not a commit")?;
+        Ok((old_commit, new_commit))
+    } else {
+        // Treat as "old_spec to HEAD"
+        let old_obj = repo
+            .revparse_single(spec)
+            .with_context(|| format!("Cannot resolve ref: {}", spec))?;
+        let new_obj = repo
+            .revparse_single("HEAD")
+            .context("Cannot resolve HEAD")?;
+        let old_commit = old_obj
+            .peel_to_commit()
+            .context("Ref is not a commit")?;
+        let new_commit = new_obj
+            .peel_to_commit()
+            .context("HEAD is not a commit")?;
+        Ok((old_commit, new_commit))
+    }
+}
+
+// ── Dependency Health ────────────────────────────────────────────────────
+
+fn cmd_deps_health(repo_path: &Path, critical_only: bool) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
+    println!("  Querying OSV vulnerability database...");
+    let reports = cgx_engine::audit_dependencies(&canonical)?;
+
+    if reports.is_empty() {
+        println!("  No package manifests found (package.json, Cargo.toml, requirements.txt, go.mod).");
+        return Ok(());
+    }
+
+    let filtered: Vec<_> = if critical_only {
+        reports.iter().filter(|r| r.cve_count > 0).collect()
+    } else {
+        reports.iter().collect()
+    };
+
+    let total_cves: i64 = reports.iter().map(|r| r.cve_count).sum();
+    let affected: usize = reports.iter().filter(|r| r.cve_count > 0).count();
+
+    println!();
+    println!(
+        "  DEPENDENCY HEALTH \u{2014} {} packages",
+        reports.len()
+    );
+    println!("  {}", "\u{2500}".repeat(74));
+    println!(
+        "  {:<30}  {:<12}  {:>5}  {:>8}  Risk",
+        "Package", "Version", "CVEs", "Ecosystem"
+    );
+    println!("  {}", "\u{2500}".repeat(74));
+
+    for r in &filtered {
+        let risk = if r.cve_count >= 3 {
+            "CRITICAL"
+        } else if r.cve_count >= 1 {
+            "HIGH"
+        } else {
+            "LOW"
+        };
+        println!(
+            "  {:<30}  {:<12}  {:>5}  {:>8}  {}",
+            r.name, r.version, r.cve_count, r.ecosystem, risk
+        );
+    }
+
+    println!();
+    if total_cves > 0 {
+        println!(
+            "  {} package(s) with {} total CVE(s) found.",
+            affected, total_cves
+        );
+    } else {
+        println!("  No known CVEs in your dependencies.");
+    }
+
+    Ok(())
+}
+
+fn cmd_deps_audit(repo_path: &Path) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
+    let reports = cgx_engine::audit_dependencies(&canonical)?;
+
+    if reports.is_empty() {
+        println!("  No package manifests found.");
+        return Ok(());
+    }
+
+    let total_cves: i64 = reports.iter().map(|r| r.cve_count).sum();
+
+    println!("  DEPENDENCY AUDIT");
+    println!("  {}", "\u{2500}".repeat(50));
+    println!("  Packages scanned: {}", reports.len());
+    println!("  Total CVEs found: {}", total_cves);
+
+    if total_cves > 0 {
+        println!();
+        println!("  Vulnerable packages:");
+        for r in reports.iter().filter(|r| r.cve_count > 0) {
+            println!("    {} {} \u{2014} {} CVE(s)", r.name, r.version, r.cve_count);
+            for cve in r.cve_ids.iter().take(3) {
+                println!("      {}", cve);
+            }
+        }
+    } else {
+        println!("  No known CVEs in your dependencies.");
+    }
+
+    Ok(())
+}
+
+fn cmd_deps_outdated(repo_path: &Path) -> anyhow::Result<()> {
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
+    let deps = cgx_engine::parse_manifests(&canonical)?;
+
+    if deps.is_empty() {
+        println!("  No package manifests found.");
+        return Ok(());
+    }
+
+    println!("  OUTDATED PACKAGES");
+    println!("  {}", "\u{2500}".repeat(50));
+    println!("  {} packages found in manifest(s).", deps.len());
+    println!();
+    println!("  (Version comparison requires registry access.)");
+    println!("  Run npm outdated / cargo outdated / pip list --outdated for precise results.");
+
     Ok(())
 }
 
@@ -4170,6 +5587,68 @@ fn cmd_impact(repo_path: &Path, since_days: u32) -> anyhow::Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 // DOCTOR
 // ─────────────────────────────────────────────────────────────────────────────
+
+fn cmd_timeline(
+    repo_path: &Path,
+    commits: usize,
+    since: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let db = GraphDb::open(repo_path)?;
+    let entries = build_timeline(repo_path, &db, commits, since)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
+    println!();
+    println!("  cgx timeline");
+    println!("  {}", "\u{2500}".repeat(80));
+    println!("  {:<9}  {:<11}  {:>6}  {:>6}  {:>6}  Message", "SHA", "Date", "Files", "+ins", "-del");
+    println!("  {}", "\u{2500}".repeat(80));
+
+    for entry in &entries {
+        let sha_short = &entry.commit_sha[..8.min(entry.commit_sha.len())];
+        let (file_count, insertions, deletions) = entry
+            .snapshot_data
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .map(|v| {
+                let fc = v["file_count"].as_i64().unwrap_or(0);
+                let ins = v["insertions"].as_i64().unwrap_or(0);
+                let del = v["deletions"].as_i64().unwrap_or(0);
+                (fc, ins, del)
+            })
+            .unwrap_or((0, 0, 0));
+
+        let msg = if entry.commit_msg.len() > 48 {
+            format!("{}...", &entry.commit_msg[..45])
+        } else {
+            entry.commit_msg.clone()
+        };
+
+        println!(
+            "  {:<9}  {:<11}  {:>6}  {:>6}  {:>6}  {}",
+            sha_short,
+            entry.commit_date,
+            file_count,
+            format!("+{}", insertions),
+            format!("-{}", deletions),
+            msg
+        );
+    }
+
+    println!("  {}", "\u{2500}".repeat(80));
+    println!("  {} commit(s) shown", entries.len());
+    println!(
+        "  Snapshots cached at: {}",
+        db.db_path.display()
+    );
+    println!();
+
+    Ok(())
+}
 
 fn cmd_doctor() -> anyhow::Result<()> {
     use std::process::Command;
