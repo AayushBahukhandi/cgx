@@ -6,14 +6,14 @@
 
 **CLI**
 
-<video src="https://github.com/AayushBahukhandi/cgx/releases/download/v0.3.2/cgx-cli.mp4" controls autoplay loop muted width="100%"></video>
+<video src="https://aayushbahukhandi.github.io/cgx/cgx-cli.mp4" controls autoplay loop muted width="100%"></video>
 
 </td>
 <td align="center" width="50%">
 
 **Web UI**
 
-<video src="https://github.com/AayushBahukhandi/cgx/releases/download/v0.3.2/cgx-web.mp4" controls autoplay loop muted width="100%"></video>
+<video src="https://aayushbahukhandi.github.io/cgx/cgx-web.mp4" controls autoplay loop muted width="100%"></video>
 
 </td>
 </tr>
@@ -30,7 +30,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Graph](https://img.shields.io/badge/cgx-live%20graph-blue)](https://aayushbahukhandi.github.io/cgx/)
 
-[**Live Demo**](https://aayushbahukhandi.github.io/cgx/) · [**Documentation**](docs/) · [**Releases**](https://github.com/AayushBahukhandi/cgx/releases)
+[**Live Demo**](https://aayushbahukhandi.github.io/cgx/) · [**Documentation**](https://docs.rs/cgx-cli) · [**Releases**](https://github.com/AayushBahukhandi/cgx/releases)
 
 </div>
 
