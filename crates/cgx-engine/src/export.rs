@@ -4,6 +4,7 @@ use std::process::Command;
 
 use crate::graph::{Edge, GraphDb, Node};
 
+/// Serialize the full graph (nodes, edges, communities, metadata) to pretty-printed JSON.
 pub fn export_json(db: &GraphDb) -> anyhow::Result<String> {
     let nodes = db.get_all_nodes()?;
     let edges = db.get_all_edges()?;
@@ -40,6 +41,10 @@ pub fn export_json(db: &GraphDb) -> anyhow::Result<String> {
     Ok(serde_json::to_string_pretty(&output)?)
 }
 
+/// Export the graph as a Mermaid `graph TD` diagram.
+///
+/// Selects the `max_nodes` highest-degree nodes (clamped to 500) and the
+/// edges between them.  Edge styles vary by kind: `CALLS` →, `IMPORTS` -.->`, `CO_CHANGES` ==>.
 pub fn export_mermaid(db: &GraphDb, max_nodes: usize) -> anyhow::Result<String> {
     let max = max_nodes.clamp(1, 500);
     let nodes = db.get_all_nodes()?;
@@ -108,6 +113,7 @@ pub fn export_mermaid(db: &GraphDb, max_nodes: usize) -> anyhow::Result<String> 
     Ok(output)
 }
 
+/// Export the graph in Graphviz DOT format with colour-coded node kinds and edge types.
 pub fn export_dot(db: &GraphDb) -> anyhow::Result<String> {
     let nodes = db.get_all_nodes()?;
     let edges = db.get_all_edges()?;
@@ -193,6 +199,10 @@ pub fn export_dot(db: &GraphDb) -> anyhow::Result<String> {
     Ok(output)
 }
 
+/// Export the graph as an SVG image.
+///
+/// Attempts to render via the system `dot` (Graphviz) binary; falls back to a
+/// built-in circle layout if `dot` is not installed.
 pub fn export_svg(db: &GraphDb) -> anyhow::Result<String> {
     let dot_output = export_dot(db)?;
 
@@ -341,6 +351,7 @@ fn render_svg_circle(nodes: &[Node], edges: &[Edge]) -> anyhow::Result<String> {
     Ok(svg)
 }
 
+/// Export the graph in GraphML (XML) format compatible with Gephi and yEd.
 pub fn export_graphml(db: &GraphDb) -> anyhow::Result<String> {
     let nodes = db.get_all_nodes()?;
     let edges = db.get_all_edges()?;

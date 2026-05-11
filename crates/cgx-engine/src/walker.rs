@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
 
+/// Source language detected from file extension.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Language {
     TypeScript,
@@ -12,12 +13,16 @@ pub enum Language {
     Java,
     CSharp,
     Php,
+    /// Extension not recognised — file is skipped by the parser.
     Unknown,
 }
 
+/// A source file that has been read from disk and is ready for parsing.
 #[derive(Debug, Clone)]
 pub struct SourceFile {
+    /// Absolute path on disk.
     pub path: PathBuf,
+    /// Path relative to the repo root, used as the stable identifier in the graph.
     pub relative_path: String,
     pub language: Language,
     pub content: String,
@@ -52,6 +57,11 @@ fn should_skip_dir(name: &str) -> bool {
     SKIP_DIR_SUFFIXES.iter().any(|suf| name.ends_with(suf))
 }
 
+/// Walk a repository and return every parseable source file.
+///
+/// Respects `.gitignore` and `.cgxignore` rules, skips build-artifact
+/// directories (`target/`, `node_modules/`, `dist/`, …), binary files,
+/// minified bundles, and files larger than 2 MB.
 pub fn walk_repo(repo_path: &Path) -> anyhow::Result<Vec<SourceFile>> {
     let mut files = Vec::new();
     let canonical = repo_path.canonicalize()?;

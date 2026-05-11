@@ -2,6 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::graph::{Edge, GraphDb, Node};
 
+/// Partition nodes into communities using the Louvain modularity algorithm.
+///
+/// Returns a map of `node_id → community_id` (IDs start at 1).  Nodes with no
+/// edges are each placed in their own singleton community.
 pub fn detect_communities(nodes: &[Node], edges: &[Edge]) -> HashMap<String, i64> {
     if nodes.is_empty() {
         return HashMap::new();
@@ -146,6 +150,11 @@ fn modularity_delta(ki_in: f64, sigma_tot: f64, ki: f64, m2: f64) -> f64 {
     (ki_in / m2) - (sigma_tot * ki / (2.0 * m2 * m2))
 }
 
+/// Run community detection on the graph stored in `db` and persist the results.
+///
+/// Clears any existing community assignments, recomputes them with
+/// [`detect_communities`], writes them back, and returns the number of
+/// distinct communities found.
 pub fn run_clustering(db: &GraphDb) -> anyhow::Result<usize> {
     db.clear_communities()?;
 

@@ -9,6 +9,12 @@ static SOURCE_EXTS: &[&str] = &[
     "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "cs", "php",
 ];
 
+/// Walk the git log and produce a [`SnapshotEntry`] per commit.
+///
+/// Each entry records the source-file count and diff stats (insertions/deletions)
+/// for that commit.  Already-computed snapshots are read from the DB cache and
+/// not recomputed.  Walk stops after `max_commits` commits or when the commit
+/// date goes before `since` (format `"YYYY-MM-DD"`).
 pub fn build_timeline(
     repo_path: &Path,
     db: &GraphDb,

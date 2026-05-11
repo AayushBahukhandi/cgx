@@ -2,14 +2,22 @@ use std::collections::HashMap;
 
 use crate::walker::{Language, SourceFile};
 
+/// The semantic category of a graph node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum NodeKind {
+    /// A source file on disk.
     File,
+    /// A named function or method.
     Function,
+    /// A class, struct, or interface definition.
     Class,
+    /// A module-level variable or constant.
     Variable,
+    /// A type alias, interface, or enum definition.
     Type,
+    /// A package or module (e.g. Go package, Python module).
     Module,
+    /// A git commit author, used in ownership edges.
     Author,
 }
 
@@ -33,9 +41,12 @@ impl CommentKind {
     }
 }
 
+/// A structured annotation extracted from a source comment (e.g. `@todo`, `@deprecated`).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommentTag {
+    /// Tag name, e.g. `"todo"`, `"fixme"`, `"hack"`.
     pub tag_type: String,
+    /// Full comment text following the tag marker.
     pub text: String,
     pub line: u32,
     pub comment_kind: CommentKind,
@@ -55,16 +66,25 @@ impl NodeKind {
     }
 }
 
+/// The semantic relationship represented by a graph edge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum EdgeKind {
+    /// Function/method invocation.
     Calls,
+    /// File imports another file or module.
     Imports,
+    /// Class inherits from or implements another class/interface.
     Inherits,
+    /// File exposes a symbol (file → function/class).
     Exports,
+    /// Two files changed together in git history.
     CoChanges,
+    /// Author owns a file (from git blame).
     Owns,
+    /// File depends on an external package (from manifest parsing).
     DependsOn,
+    /// Test file exercises a production symbol.
     Tests,
 }
 
@@ -83,14 +103,18 @@ impl EdgeKind {
     }
 }
 
+/// A node as produced by a language parser, before being written to the graph DB.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeDef {
+    /// Stable, unique identifier — format: `<prefix>:<path>:<name>`, e.g. `fn:src/lib.rs:parse`.
     pub id: String,
     pub kind: NodeKind,
     pub name: String,
+    /// Repo-relative file path.
     pub path: String,
     pub line_start: u32,
     pub line_end: u32,
+    /// Parser-specific extras (e.g. `{"exported": true, "complexity": 4.0}`).
     #[serde(default)]
     pub metadata: serde_json::Value,
 }
@@ -109,13 +133,16 @@ impl Default for NodeDef {
     }
 }
 
+/// A directed edge as produced by a language parser or the resolver.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EdgeDef {
     pub src: String,
     pub dst: String,
     pub kind: EdgeKind,
+    /// Relative strength of the relationship (default 1.0).
     #[serde(default = "default_edge_weight")]
     pub weight: f64,
+    /// Parser certainty that this edge is real, 0.0–1.0 (default 1.0, fuzzy matches use 0.8).
     #[serde(default = "default_edge_weight")]
     pub confidence: f64,
 }
@@ -136,6 +163,7 @@ fn default_edge_weight() -> f64 {
     1.0
 }
 
+/// The output of parsing a single source file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParseResult {
     pub nodes: Vec<NodeDef>,
@@ -160,16 +188,24 @@ impl Default for ParseResult {
     }
 }
 
+/// Trait implemented by every language-specific Tree-sitter parser.
 pub trait LanguageParser: Send + Sync {
+    /// File extensions this parser handles, e.g. `&["ts", "tsx"]`.
     fn extensions(&self) -> &[&str];
+    /// Parse a source file and return all nodes, edges, and comment tags found.
     fn extract(&self, file: &SourceFile) -> anyhow::Result<ParseResult>;
 }
 
+/// Registry that maps [`Language`] variants to their [`LanguageParser`] implementations.
+///
+/// Constructed with all built-in parsers pre-registered.  Use [`ParserRegistry::parse`]
+/// for a single file or [`ParserRegistry::parse_all`] for parallel batch processing.
 pub struct ParserRegistry {
     parsers: HashMap<Language, Box<dyn LanguageParser>>,
 }
 
 impl ParserRegistry {
+    /// Create a registry with all built-in language parsers registered.
     pub fn new() -> Self {
         let mut parsers: HashMap<Language, Box<dyn LanguageParser>> = HashMap::new();
 
@@ -206,6 +242,7 @@ impl ParserRegistry {
         Self { parsers }
     }
 
+    /// Parse a single file, returning an empty result for unknown languages.
     pub fn parse(&self, file: &SourceFile) -> anyhow::Result<ParseResult> {
         if let Some(parser) = self.parsers.get(&file.language) {
             parser.extract(file)
@@ -214,6 +251,7 @@ impl ParserRegistry {
         }
     }
 
+    /// Parse all files in parallel using Rayon, logging warnings on individual failures.
     pub fn parse_all(&self, files: &[SourceFile]) -> Vec<ParseResult> {
         use rayon::prelude::*;
         files

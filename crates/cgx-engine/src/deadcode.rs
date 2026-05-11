@@ -1,18 +1,24 @@
 use crate::graph::{GraphDb, Node};
 
+/// A graph node flagged as a dead-code candidate.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeadNode {
     pub node: Node,
     pub reason: DeadReason,
     pub confidence: Confidence,
+    /// Human-readable explanation of why this might be a false positive.
     pub false_positive_risk: Option<String>,
 }
 
+/// Confidence level for a dead-code finding.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
+    /// Very likely dead — no framework hooks, entry points, or external consumers detected.
     High,
+    /// Probably dead but verify — e.g. unused variables or zombie files.
     Medium,
+    /// Possibly dead but high false-positive risk (framework hook, entry point name, exported type).
     Low,
 }
 
@@ -26,13 +32,19 @@ impl Confidence {
     }
 }
 
+/// Why a node was classified as dead code.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeadReason {
+    /// Exported symbol with no inbound `CALLS` edges from other files.
     UnreferencedExport,
+    /// Private function with no inbound `CALLS` edges at all.
     Unreachable,
+    /// Variable node with no inbound `CALLS` edges.
     UnusedVariable,
+    /// Node has neither inbound nor outbound `CALLS` edges.
     Disconnected,
+    /// File node that is never imported and has no known consumers.
     ZombieFile,
 }
 
@@ -48,6 +60,7 @@ impl DeadReason {
     }
 }
 
+/// Aggregated dead-code analysis results, grouped by reason.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DeadCodeReport {
     pub unreferenced_exports: Vec<DeadNode>,
@@ -58,6 +71,7 @@ pub struct DeadCodeReport {
 }
 
 impl DeadCodeReport {
+    /// Iterate over every finding regardless of category.
     pub fn all_items(&self) -> Vec<&DeadNode> {
         let mut all = Vec::new();
         all.extend(self.unreferenced_exports.iter());
@@ -68,6 +82,7 @@ impl DeadCodeReport {
         all
     }
 
+    /// Total number of dead-code findings across all categories.
     pub fn total(&self) -> usize {
         self.unreferenced_exports.len()
             + self.unreachable.len()
@@ -76,6 +91,7 @@ impl DeadCodeReport {
             + self.zombie_files.len()
     }
 
+    /// Count findings broken down by confidence level: `(high, medium, low)`.
     pub fn count_by_confidence(&self) -> (usize, usize, usize) {
         let mut high = 0;
         let mut medium = 0;
@@ -191,6 +207,12 @@ fn compute_confidence_and_fp(node: &Node, reason: &DeadReason) -> (Confidence, O
     }
 }
 
+/// Analyse the graph for dead code and return a categorised report.
+///
+/// Runs five SQL queries against the graph DB:
+/// unreferenced exports, unreachable private functions, unused variables,
+/// fully disconnected nodes, and zombie files.  Framework hooks and common
+/// entry-point names are flagged with [`Confidence::Low`] to reduce noise.
 pub fn detect_dead_code(db: &GraphDb) -> anyhow::Result<DeadCodeReport> {
     let mut report = DeadCodeReport::default();
 
@@ -328,6 +350,10 @@ pub fn detect_dead_code(db: &GraphDb) -> anyhow::Result<DeadCodeReport> {
     Ok(report)
 }
 
+/// Persist dead-code findings from a report back into the graph DB.
+///
+/// Sets `is_dead_candidate = true` and `dead_reason` on each flagged node so
+/// the information is available to queries and the web UI without re-running analysis.
 pub fn mark_dead_candidates(db: &GraphDb, report: &DeadCodeReport) -> anyhow::Result<()> {
     let mut items: Vec<(String, String)> = Vec::new();
     for dn in &report.unreferenced_exports {

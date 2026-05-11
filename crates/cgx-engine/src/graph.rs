@@ -6,47 +6,62 @@ use sha2::{Digest, Sha256};
 
 use crate::parser::{EdgeDef, NodeDef};
 
+/// A node in the code knowledge graph as stored in (and read from) the DuckDB database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
+    /// Stable unique identifier, e.g. `fn:src/lib.rs:parse` or `file:src/lib.rs`.
     pub id: String,
+    /// String form of [`NodeKind`], e.g. `"Function"`, `"File"`.
     pub kind: String,
     pub name: String,
+    /// Repo-relative file path.
     pub path: String,
     pub line_start: u32,
     pub line_end: u32,
     #[serde(default)]
     pub language: String,
+    /// Normalised commit-frequency score over the last 90 days (0.0–1.0).
     #[serde(default)]
     pub churn: f64,
+    /// Normalised co-change coupling score (0.0–1.0).
     #[serde(default)]
     pub coupling: f64,
+    /// Community ID assigned by the Louvain clustering pass (0 = unclustered).
     #[serde(default)]
     pub community: i64,
     #[serde(default)]
     pub in_degree: i64,
     #[serde(default)]
     pub out_degree: i64,
+    /// Whether the symbol is publicly exported from its file.
     #[serde(default)]
     pub exported: bool,
+    /// Whether dead-code analysis flagged this node.
     #[serde(default)]
     pub is_dead_candidate: bool,
     #[serde(default)]
     pub dead_reason: Option<String>,
+    /// Cyclomatic-complexity-derived score (higher = more complex).
     #[serde(default)]
     pub complexity: f64,
     #[serde(default)]
     pub is_test_file: bool,
+    /// Number of test functions in this file (only set on `File` nodes).
     #[serde(default)]
     pub test_count: i64,
+    /// Whether at least one test exercises this symbol.
     #[serde(default)]
     pub is_tested: bool,
 }
 
+/// A directed edge in the code knowledge graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
+    /// Composite key: `"<src>|<kind>|<dst>"`.
     pub id: String,
     pub src: String,
     pub dst: String,
+    /// String form of [`EdgeKind`], e.g. `"CALLS"`, `"IMPORTS"`.
     pub kind: String,
     #[serde(default = "default_weight")]
     pub weight: f64,
@@ -58,10 +73,12 @@ fn default_weight() -> f64 {
     1.0
 }
 
+/// High-level statistics for a fully indexed repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoStats {
     pub node_count: u64,
     pub edge_count: u64,
+    /// Fraction of nodes per language, e.g. `{"typescript": 0.72}`.
     pub language_breakdown: std::collections::HashMap<String, f64>,
     pub community_count: u32,
     pub function_count: u64,
@@ -69,42 +86,50 @@ pub struct RepoStats {
     pub file_count: u64,
 }
 
+/// `(community_id, label, node_count, top_node_ids)`
 pub type CommunityRow = (i64, String, i64, Vec<String>);
-/// (overall_pct, Vec<(community_id, documented, total)>, undocumented_high_coupling)
+/// `(overall_pct, per_community: Vec<(community_id, documented, total)>, undocumented_high_coupling_nodes)`
 pub type DocsCoverage = (f64, Vec<(i64, i64, i64)>, Vec<Node>);
-/// (overall_pct, tested_count, untested_count, gaps)
+/// `(overall_pct, tested_count, untested_count, untested_high_coupling_nodes)`
 pub type TestCoverageSummary = (f64, i64, i64, Vec<Node>);
 type CommunityGroup = (Vec<(String, i64, String)>, i64); // (kind, in_degree, name)
 
+/// A lightweight record of a single git commit used by the timeline view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotEntry {
     pub id: String,
     pub commit_sha: String,
+    /// `"YYYY-MM-DD"` formatted date of the commit.
     pub commit_date: String,
     pub commit_msg: String,
     pub node_count: i64,
     pub edge_count: i64,
-    /// JSON blob: {"file_count": N, "insertions": N, "deletions": N}
+    /// JSON blob: `{"file_count": N, "insertions": N, "deletions": N}`
     pub snapshot_data: Option<String>,
 }
 
+/// A comment annotation tag (e.g. `@todo`, `@fixme`) stored in the `tags` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagRow {
     pub id: String,
     pub file_path: String,
     pub line: u32,
+    /// e.g. `"todo"`, `"fixme"`, `"hack"`.
     pub tag_type: String,
     pub text: String,
-    /// "code", "jsx", or "jsx_commented_code"
+    /// `"code"`, `"jsx"`, or `"jsx_commented_code"` — see [`CommentKind`](crate::parser::CommentKind).
     pub comment_type: String,
 }
 
+/// A detected code-clone pair stored in the `clones` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloneRow {
     pub id: String,
     pub node_a: String,
     pub node_b: String,
+    /// Jaccard similarity score, 0.0–1.0.
     pub similarity: f64,
+    /// `"exact"` or `"near"`.
     pub kind: String,
 }
 
@@ -184,13 +209,21 @@ impl Edge {
     }
 }
 
+/// Handle to the DuckDB database that stores the code knowledge graph.
+///
+/// Each repository gets its own `.db` file under `~/.cgx/repos/<repo_id>.db`.
+/// All methods operate on the embedded DuckDB connection and are synchronous.
 pub struct GraphDb {
     pub conn: duckdb::Connection,
+    /// SHA-256–derived stable identifier for the repository path.
     pub repo_id: String,
     pub db_path: PathBuf,
 }
 
 impl GraphDb {
+    /// Open (or create) the graph database for the repository at `repo_path`.
+    ///
+    /// Creates all required tables and runs forward migrations on existing databases.
     pub fn open(repo_path: &Path) -> anyhow::Result<Self> {
         let repo_id = repo_hash(repo_path);
         let dir = dirs::home_dir()
@@ -309,6 +342,7 @@ impl GraphDb {
         })
     }
 
+    /// Insert or replace nodes in the `nodes` table, returning the count written.
     pub fn upsert_nodes(&self, nodes: &[Node]) -> anyhow::Result<usize> {
         if nodes.is_empty() {
             return Ok(0);
@@ -343,6 +377,7 @@ impl GraphDb {
         Ok(count)
     }
 
+    /// Insert or replace edges in the `edges` table, returning the count written.
     pub fn upsert_edges(&self, edges: &[Edge]) -> anyhow::Result<usize> {
         if edges.is_empty() {
             return Ok(0);
@@ -366,6 +401,7 @@ impl GraphDb {
         Ok(count)
     }
 
+    /// Insert or replace comment annotation tags, returning the count written.
     pub fn upsert_tags(&self, tags: &[TagRow]) -> anyhow::Result<usize> {
         if tags.is_empty() {
             return Ok(0);
@@ -389,6 +425,7 @@ impl GraphDb {
         Ok(count)
     }
 
+    /// Query comment annotation tags with optional filters on tag type and comment kind.
     pub fn get_tags(
         &self,
         tag_type_filter: Option<&str>,
@@ -439,6 +476,7 @@ impl GraphDb {
         Ok(results)
     }
 
+    /// Drop and recreate the `tags` table, removing all stored annotations.
     pub fn clear_all_tags(&self) -> anyhow::Result<()> {
         self.conn.execute_batch(
             "DROP TABLE IF EXISTS tags;
@@ -456,6 +494,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Delete all tags whose `file_path` is in `paths` (used during incremental re-index).
     pub fn delete_tags_for_paths(&self, paths: &[String]) -> anyhow::Result<()> {
         if paths.is_empty() {
             return Ok(());
@@ -467,6 +506,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Fetch a single node by its stable `id`, returning `None` if not found.
     pub fn get_node(&self, id: &str) -> anyhow::Result<Option<Node>> {
         let mut stmt = self
             .conn
@@ -501,6 +541,7 @@ impl GraphDb {
         }
     }
 
+    /// BFS outward from `id` following edges in both directions, up to `depth` hops (max 3).
     pub fn get_neighbors(&self, id: &str, depth: u8) -> anyhow::Result<Vec<Node>> {
         let mut seen = std::collections::HashSet::new();
         seen.insert(id.to_string());
@@ -559,6 +600,7 @@ impl GraphDb {
         Ok(result)
     }
 
+    /// Return every node in the graph.
     pub fn get_all_nodes(&self) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0) FROM nodes",
@@ -594,6 +636,7 @@ impl GraphDb {
         Ok(nodes)
     }
 
+    /// Return every edge in the graph.
     pub fn get_all_edges(&self) -> anyhow::Result<Vec<Edge>> {
         let mut stmt = self
             .conn
@@ -616,6 +659,7 @@ impl GraphDb {
         Ok(edges)
     }
 
+    /// Total number of nodes in the graph.
     pub fn node_count(&self) -> anyhow::Result<u64> {
         let count: i64 = self
             .conn
@@ -623,6 +667,7 @@ impl GraphDb {
         Ok(count as u64)
     }
 
+    /// Total number of edges in the graph.
     pub fn edge_count(&self) -> anyhow::Result<u64> {
         let count: i64 = self
             .conn
@@ -630,6 +675,7 @@ impl GraphDb {
         Ok(count as u64)
     }
 
+    /// Truncate nodes, edges, and communities tables (does not remove file hashes).
     pub fn clear(&self) -> anyhow::Result<()> {
         // TRUNCATE avoids DuckDB ART index bulk-delete failures on large datasets
         // and is more reliable than DROP+CREATE for data persistence across connections.
@@ -641,6 +687,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Fraction of nodes per language, normalised to sum to 1.0.
     pub fn get_language_breakdown(&self) -> anyhow::Result<std::collections::HashMap<String, f64>> {
         let mut stmt = self.conn.prepare(
             "SELECT language, COUNT(*) as cnt FROM nodes WHERE language != '' GROUP BY language",
@@ -667,6 +714,7 @@ impl GraphDb {
         Ok(breakdown)
     }
 
+    /// Count of nodes per [`NodeKind`] string, e.g. `{"Function": 412, "File": 38}`.
     pub fn get_node_counts_by_kind(
         &self,
     ) -> anyhow::Result<std::collections::HashMap<String, u64>> {
@@ -685,6 +733,7 @@ impl GraphDb {
         Ok(counts)
     }
 
+    /// Write normalised churn and coupling scores back to a single node.
     pub fn upsert_node_scores(
         &self,
         node_id: &str,
@@ -698,6 +747,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Recompute and persist `in_degree` / `out_degree` for every node.
     pub fn update_in_out_degrees(&self) -> anyhow::Result<()> {
         self.conn.execute_batch(
             "UPDATE nodes SET in_degree = 0, out_degree = 0;
@@ -707,6 +757,9 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Return the top `limit` file hotspots ranked by `churn × coupling + in_degree`.
+    ///
+    /// Each tuple is `(path, churn, coupling, in_degree)`.
     pub fn get_hotspots(&self, limit: usize) -> anyhow::Result<Vec<(String, f64, f64, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT path, churn, coupling, in_degree
@@ -730,6 +783,7 @@ impl GraphDb {
         Ok(results)
     }
 
+    /// Return `(author_name, file_count)` pairs sorted by file count descending.
     pub fn get_ownership(&self) -> anyhow::Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT n.name, COUNT(e.id) as file_count
@@ -749,6 +803,7 @@ impl GraphDb {
         Ok(results)
     }
 
+    /// Recompute `coupling` for every `File` node as `in_degree / max_in_degree`.
     pub fn compute_coupling(&self) -> anyhow::Result<()> {
         self.conn.execute_batch(
             "UPDATE nodes SET coupling = 0.0;
@@ -763,6 +818,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Write Louvain community assignments from `detect_communities` back to the DB.
     pub fn update_node_communities(
         &self,
         communities: &std::collections::HashMap<String, i64>,
@@ -781,6 +837,7 @@ impl GraphDb {
         Ok(count)
     }
 
+    /// Return a [`RepoStats`] summary for the currently indexed repository.
     pub fn get_stats(&self) -> anyhow::Result<RepoStats> {
         let node_count = self.node_count()?;
         let edge_count = self.edge_count()?;
@@ -799,6 +856,7 @@ impl GraphDb {
         })
     }
 
+    /// Return up to `limit` nodes with `in_degree == 0` — likely entry points or roots.
     pub fn get_entry_points(&self, limit: usize) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
@@ -837,6 +895,7 @@ impl GraphDb {
         Ok(results)
     }
 
+    /// Return up to `limit` nodes with the highest `in_degree` — the most-depended-on symbols.
     pub fn get_god_nodes(&self, limit: usize) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
@@ -875,6 +934,7 @@ impl GraphDb {
         Ok(results)
     }
 
+    /// Return all communities as [`CommunityRow`] tuples, sorted by size descending.
     pub fn get_communities(&self) -> anyhow::Result<Vec<CommunityRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT community, kind, name, path, in_degree
@@ -924,6 +984,7 @@ impl GraphDb {
         Ok(result)
     }
 
+    /// Reset all community assignments to 0 and clear the communities table.
     pub fn clear_communities(&self) -> anyhow::Result<()> {
         self.conn.execute("UPDATE nodes SET community = 0", [])?;
         self.conn.execute("DELETE FROM communities", [])?;
@@ -988,6 +1049,7 @@ impl GraphDb {
         Ok(result)
     }
 
+    /// Return all nodes that belong to the given community ID.
     pub fn get_nodes_by_community(&self, community: i64) -> anyhow::Result<Vec<Node>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling, community, in_degree, out_degree, COALESCE(exported, false), COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0), COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0) FROM nodes WHERE community = ?",
@@ -1022,6 +1084,7 @@ impl GraphDb {
         Ok(nodes)
     }
 
+    /// Set `is_dead_candidate = true` and `dead_reason` for each `(node_id, reason)` pair.
     pub fn mark_dead_candidates(&self, items: &[(String, String)]) -> anyhow::Result<()> {
         // items = vec of (node_id, dead_reason)
         if items.is_empty() {
@@ -1036,6 +1099,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Return `(total_dead_candidates, high_confidence_count)` from the DB.
     pub fn get_dead_code_stats(&self) -> anyhow::Result<(i64, i64)> {
         // Returns (total_candidates, high_confidence_count)
         let total: i64 = self
@@ -1053,6 +1117,7 @@ impl GraphDb {
         Ok((total, high))
     }
 
+    /// Return all edges where both endpoints belong to the given community.
     pub fn get_edges_by_community(&self, community: i64) -> anyhow::Result<Vec<Edge>> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT e.id, e.src, e.dst, e.kind, e.weight, e.confidence
@@ -1079,6 +1144,7 @@ impl GraphDb {
 
     // ── File hashes for incremental indexing ────────────────────────────────
 
+    /// Load the SHA-256 content hashes of all previously indexed files (used for incremental indexing).
     pub fn get_file_hashes(&self) -> anyhow::Result<std::collections::HashMap<String, String>> {
         let mut stmt = self.conn.prepare("SELECT path, hash FROM file_hashes")?;
         let rows = stmt.query_map([], |row| {
@@ -1092,6 +1158,7 @@ impl GraphDb {
         Ok(result)
     }
 
+    /// Record or update the SHA-256 hash for a single file path.
     pub fn set_file_hash(&self, path: &str, hash: &str) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO file_hashes (path, hash) VALUES (?, ?)",
@@ -1100,6 +1167,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Remove stored file hashes for deleted or moved files.
     pub fn remove_file_hashes(&self, paths: &[String]) -> anyhow::Result<()> {
         if paths.is_empty() {
             return Ok(());
@@ -1113,6 +1181,9 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Delete all nodes (and their connected edges) whose path is in `paths`.
+    ///
+    /// Used during incremental re-indexing to remove stale data for changed files.
     pub fn delete_nodes_by_paths(&self, paths: &[String]) -> anyhow::Result<usize> {
         if paths.is_empty() {
             return Ok(0);
@@ -1140,6 +1211,7 @@ impl GraphDb {
         Ok(count)
     }
 
+    /// Store a doc comment string on a node (used by the docs-coverage analysis pass).
     pub fn update_node_doc_comment(&self, id: &str, doc: &str) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE nodes SET doc_comment = ? WHERE id = ?",
@@ -1148,6 +1220,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Write a cyclomatic-complexity score back to a single node.
     pub fn update_node_complexity(&self, id: &str, complexity: f64) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE nodes SET complexity = ? WHERE id = ?",
@@ -1156,6 +1229,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Return up to `limit` `Function` nodes with `complexity >= min_score`, sorted descending.
     pub fn get_nodes_by_complexity(
         &self,
         limit: usize,
@@ -1272,6 +1346,7 @@ impl GraphDb {
         Ok((overall, by_community, undocumented))
     }
 
+    /// Insert or replace clone-pair records, returning the count written.
     pub fn upsert_clones(&self, clones: &[CloneRow]) -> anyhow::Result<usize> {
         if clones.is_empty() {
             return Ok(0);
@@ -1287,6 +1362,7 @@ impl GraphDb {
         Ok(count)
     }
 
+    /// Query clone pairs above `min_similarity`, optionally filtered by `kind` (`"exact"` or `"near"`).
     pub fn get_clones(
         &self,
         min_similarity: f64,
@@ -1328,11 +1404,13 @@ impl GraphDb {
         Ok(results)
     }
 
+    /// Delete all clone-pair records from the database.
     pub fn clear_clones(&self) -> anyhow::Result<()> {
         self.conn.execute("DELETE FROM clones", [])?;
         Ok(())
     }
 
+    /// Flag every node whose path is in `paths` as a test file (`is_test_file = true`).
     pub fn mark_test_files(&self, paths: &[String]) -> anyhow::Result<()> {
         if paths.is_empty() {
             return Ok(());
@@ -1425,6 +1503,7 @@ impl GraphDb {
         Ok((overall_pct, tested, total - tested, gaps))
     }
 
+    /// Insert or replace a timeline snapshot entry.
     pub fn upsert_snapshot(&self, entry: &SnapshotEntry) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO snapshots (id, commit_sha, commit_date, commit_msg, node_count, edge_count, snapshot_data)
@@ -1442,6 +1521,7 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Return up to `limit` timeline snapshots, most recent first.
     pub fn get_snapshots(&self, limit: usize) -> anyhow::Result<Vec<SnapshotEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, commit_sha, commit_date, commit_msg, COALESCE(node_count,0), COALESCE(edge_count,0), snapshot_data
@@ -1465,6 +1545,7 @@ impl GraphDb {
         Ok(result)
     }
 
+    /// Look up a snapshot by full SHA or short prefix, returning `None` if not cached.
     pub fn get_snapshot_by_sha(&self, sha: &str) -> anyhow::Result<Option<SnapshotEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, commit_sha, commit_date, commit_msg, COALESCE(node_count,0), COALESCE(edge_count,0), snapshot_data
@@ -1488,6 +1569,7 @@ impl GraphDb {
         }
     }
 
+    /// Total number of cached timeline snapshots.
     pub fn snapshot_count(&self) -> i64 {
         self.conn
             .query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))

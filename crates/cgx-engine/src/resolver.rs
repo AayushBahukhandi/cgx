@@ -20,6 +20,12 @@ pub fn is_test_path(path: &str) -> bool {
         || lower.ends_with("_test.rs")
 }
 
+/// Resolve raw parser edges into fully-qualified node IDs.
+///
+/// Import paths and call targets are matched against the known node set.
+/// `CALLS` edges originating from test files are reclassified as `TESTS`
+/// when the destination is a production symbol.  Unresolvable edges are
+/// kept so later analysis phases can still use them.
 pub fn resolve(
     nodes: &[NodeDef],
     edges: &[EdgeDef],
@@ -177,6 +183,10 @@ pub fn resolve(
     Ok(resolved_edges)
 }
 
+/// Create `File` [`NodeDef`]s for every path in `file_paths`.
+///
+/// These synthetic nodes are added to the graph so that `IMPORTS` edges
+/// always have a valid destination, even for files that contain no parseable symbols.
 pub fn create_file_nodes(
     file_paths: &HashSet<String>,
     language: &HashMap<String, &str>,
@@ -201,6 +211,10 @@ pub fn create_file_nodes(
     nodes
 }
 
+/// Build a `file_path → language` lookup from a slice of parsed nodes.
+///
+/// Function and class nodes take priority over file nodes so the inferred
+/// language is as accurate as possible.
 pub fn build_language_map(nodes: &[NodeDef]) -> HashMap<String, &'static str> {
     let mut map = HashMap::new();
     for node in nodes {

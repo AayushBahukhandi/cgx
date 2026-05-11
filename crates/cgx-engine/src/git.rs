@@ -6,12 +6,21 @@ use git2::{Repository, Sort};
 type OwnerList = Vec<(String, String, f64)>;
 type CoChangeList = Vec<(String, String, f64)>;
 
+/// Results of analysing a repository's git history.
 pub struct GitAnalysis {
+    /// Normalised churn score per file path (0.0–1.0) over the last 90 days.
     pub file_churn: HashMap<String, f64>,
+    /// Top-3 authors per file: `(name, email, ownership_fraction)`.
     pub file_owners: HashMap<String, OwnerList>,
+    /// File pairs that changed together, with normalised co-change score (0.0–1.0).
     pub co_changes: CoChangeList,
 }
 
+/// Analyse a repository's git history to extract churn, ownership, and co-change data.
+///
+/// - **Churn** — commit frequency per file over the last 90 days, normalised to 0.0–1.0.
+/// - **Ownership** — top-3 authors by line count via `git blame` for each path in `file_paths`.
+/// - **Co-changes** — file pairs that appear together in the same commit over the last year.
 pub fn analyze_repo(repo_path: &Path, file_paths: &[String]) -> anyhow::Result<GitAnalysis> {
     let repo = Repository::open(repo_path)?;
 
