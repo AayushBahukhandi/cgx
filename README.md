@@ -45,7 +45,7 @@ cgx hotspots
 # Instead of asking your AI to read everything:
 # CGX_SKILL.md is auto-generated in your repo root.
 # Your AI reads it and queries the graph instead of opening files.
-# get_repo_summary = ~1,000 tokens. Reading 40 files = ~400,000 tokens.
+# get_repo_summary = ~150 tokens. Reading one large source file = ~15,000–50,000 tokens.
 ```
 
 ---
@@ -227,6 +227,7 @@ cgx view --community=3         # scope TUI view to a cluster
 cgx share                      # upload graph to a GitHub Gist → hosted viewer URL
 cgx share --token ghp_xxx      # use a specific GitHub token
 cgx share --public             # make the Gist public (default: secret)
+# To unshare: gh gist delete <gist-id>   (shown in cgx share output)
 ```
 
 `cgx share` requires a GitHub token with `gist` scope. It uses (in order): `--token`, `GITHUB_TOKEN` env var, or `gh auth token` if you have the GitHub CLI installed.
@@ -412,9 +413,9 @@ The skill file tells your AI:
 - Live stats about your codebase (hotspots, communities, entry points)
 - Mandatory trigger language so the AI fires cgx without being asked
 
-**Result:** Your AI stops reading 40 files to answer an architectural question
-and runs one `cgx query` command instead. `get_repo_summary` costs ~1,000 tokens;
-reading 40 files costs ~400,000. Same answer, 400x cheaper.
+**Result:** Your AI stops reading source files to answer an architectural question
+and runs one `cgx query` command instead. `get_repo_summary` costs ~150 tokens;
+reading a single large source file costs 15,000–50,000. Same answer, without opening a file.
 
 ### Method 1b — `/cgx` slash command in Claude Code
 
@@ -436,16 +437,16 @@ Restart your editor. cgx now exposes 10 typed tools your AI can call directly:
 
 | Tool | What it answers | Typical tokens |
 |---|---|---|
-| `get_repo_summary` | Architecture overview: nodes, communities, hotspots, god nodes | ~1,000 |
+| `get_repo_summary` | Architecture overview: nodes, communities, hotspots, god nodes | ~150 |
 | `find_symbol` | Where is X defined? File + line | ~50 |
-| `get_neighbors` | What does X depend on? What depends on X? | ~200 |
-| `get_blast_radius` | What breaks if I change X? Risk level + affected count | ~300 |
-| `get_call_chain` | Trace from A to B through the call graph | ~150 |
-| `get_community` | All nodes in the auth/db/payments cluster | ~400 |
-| `search_graph` | Full-text search over all symbol names | ~200 |
-| `get_hotspots` | Highest churn × coupling files | ~200 |
-| `get_file_owners` | Git blame ownership for any file | ~100 |
-| `get_dead_code` | Unreferenced exports, unreachable functions, zombie files — with confidence + false-positive hints | ~500 |
+| `get_neighbors` | What does X depend on? What depends on X? | ~50 |
+| `get_blast_radius` | What breaks if I change X? Risk level + affected count | ~50 |
+| `get_call_chain` | Trace from A to B through the call graph | ~100 |
+| `get_community` | All nodes in the auth/db/payments cluster | ~200 |
+| `search_graph` | Full-text search over all symbol names | ~100 |
+| `get_hotspots` | Highest churn × coupling files | ~100 |
+| `get_file_owners` | Git blame ownership for any file | ~50 |
+| `get_dead_code` | Unreferenced exports, unreachable functions, zombie files — with confidence + false-positive hints | ~100 |
 | `run_query` | Raw SQL SELECT against the graph (read-only) | varies |
 
 Every response includes a `_summary` field — a plain-text sentence the model
@@ -453,7 +454,7 @@ reads first before parsing JSON, so it can skip deeper inspection when not neede
 
 **Example:** Ask "refactor the login function to add rate limiting" in Claude Code.
 It calls `get_blast_radius`, `get_neighbors`, and `get_file_owners` — 3 tool calls,
-under **1,500 tokens total** — then writes the code knowing exactly what it needs to update.
+under **200 tokens total** — then writes the code knowing exactly what it needs to update.
 
 ---
 
@@ -552,8 +553,8 @@ Combined with in-degree, this gives you the hotspot score.
 | GitHub Pages publish | ✅ | ❌ | ❌ |
 | Self-contained binary | ✅ | ❌ | ❌ |
 | LLM required for indexing | ❌ Never | ❌ Never | ✅ Always |
-| Session context overhead | ~1,700 tokens | unknown | ~15,000 tokens |
-| `get_repo_summary` cost | ~1,000 tokens | n/a MCP | no MCP |
+| Session context overhead | ~1,300 tokens | unknown | ~15,000 tokens |
+| `get_repo_summary` cost | ~150 tokens | n/a MCP | no MCP |
 | License | MIT | Non-commercial | MIT |
 
 ---
@@ -679,6 +680,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 ---
 
 ## Roadmap
+
+**v0.3.2 — Bug Fixes (shipped)**
+- [x] `cgx share` — fixed: viewer now loads the shared graph instead of the published cgx graph when `?data=` URL param is present
+- [x] `cgx publish` — fixed: crash on repos with subdirectories in `assets/` (invalid git tree entry)
+- [x] `cgx share` — now prints `gh gist delete <id>` in output so users know how to unshare
 
 **v0.3.1 — Bug Fixes & Documentation (shipped)**
 - [x] `cgx complexity --combined` — fixed: now correctly uses file-level churn (not always-zero function churn)

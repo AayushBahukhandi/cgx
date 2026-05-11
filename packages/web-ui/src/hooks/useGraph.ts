@@ -17,16 +17,9 @@ export function useGraph() {
 
     async function load() {
       try {
-        // Priority 1: baked-in graph data (cgx publish static mode)
-        if (window.__CGX_GRAPH__) {
-          if (!cancelled) {
-            setData(window.__CGX_GRAPH__);
-            setLoading(false);
-          }
-          return;
-        }
-
-        // Priority 2: ?data=URL param (cgx share mode — load from remote JSON)
+        // Priority 1: ?data=URL param (cgx share mode — load from remote JSON)
+        // Must be checked before baked-in data so cgx share links always work
+        // even when the page was published with cgx publish
         const params = new URLSearchParams(window.location.search);
         const remoteUrl = params.get("data");
         if (remoteUrl) {
@@ -36,6 +29,15 @@ export function useGraph() {
           if (!cancelled) {
             if ("error" in json) throw new Error((json as { error: string }).error);
             setData(json as GraphData);
+            setLoading(false);
+          }
+          return;
+        }
+
+        // Priority 2: baked-in graph data (cgx publish static mode)
+        if (window.__CGX_GRAPH__) {
+          if (!cancelled) {
+            setData(window.__CGX_GRAPH__);
             setLoading(false);
           }
           return;

@@ -1,6 +1,6 @@
 [package]
 name = "cgx-mcp"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "MCP server for cgx — JSON-RPC stdio server for AI editor integrations"
 readme = "README.md"

@@ -5403,6 +5403,8 @@ async fn cmd_share(repo_path: &Path, token: Option<&str>, public: bool) -> anyho
         println!("  (secret Gist — only people with the URL can view it)");
     }
     println!();
+    println!("  To unshare:  gh gist delete {}", gist_id);
+    println!();
     Ok(())
 }
 
@@ -5430,7 +5432,7 @@ fn push_to_gh_pages(repo_path: &Path, dist_dir: &Path) -> anyhow::Result<()> {
 
     // Build tree from dist files
     let mut tree_builder = repo.treebuilder(None)?;
-    collect_files(dist_dir, dist_dir, &mut tree_builder, &repo)?;
+    collect_files(dist_dir, &mut tree_builder, &repo)?;
     let tree_oid = tree_builder.write()?;
     let tree = repo.find_tree(tree_oid)?;
 
@@ -5488,7 +5490,6 @@ fn push_to_gh_pages(repo_path: &Path, dist_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn collect_files(
-    base: &Path,
     dir: &Path,
     tree_builder: &mut git2::TreeBuilder,
     repo: &git2::Repository,
@@ -5496,17 +5497,18 @@ fn collect_files(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
 
         if path.is_dir() {
-            collect_files(base, &path, tree_builder, repo)?;
+            let mut sub_builder = repo.treebuilder(None)?;
+            collect_files(&path, &mut sub_builder, repo)?;
+            let sub_oid = sub_builder.write()?;
+            tree_builder.insert(&*name_str, sub_oid, 0o040000)?;
         } else {
             let content = std::fs::read(&path)?;
             let oid = repo.blob(&content)?;
-            let rel_path = path
-                .strip_prefix(base)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            tree_builder.insert(&rel_path, oid, 0o100644)?;
+            tree_builder.insert(&*name_str, oid, 0o100644)?;
         }
     }
     Ok(())
