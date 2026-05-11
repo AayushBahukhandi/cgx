@@ -1,0 +1,28 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+
+  configSchema:
+    type: object
+    properties:
+      repoPath:
+        type: string
+        title: Repository Path
+        description: >
+          Absolute path to the Git repository to query. Leave blank to use the
+          current working directory. Run `cgx analyze` in that directory first
+          to build the knowledge graph.
+        default: ""
+
+  commandFunction: |-
+    (config) => ({
+      command: "cgx",
+      args: config.repoPath
+        ? ["mcp", "--repo", config.repoPath]
+        : ["mcp"],
+      env: {}
+    })
+
+exampleConfig:
+  repoPath: "/path/to/your/repo"

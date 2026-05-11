@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cgx": {
+      "command": "cgx",
+      "args": ["mcp"],
+      "description": "cgx knowledge graph MCP server. Run `cgx analyze` in your repo first."
+    }
+  }
+}

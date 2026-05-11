@@ -1,0 +1,11 @@
+{
+  "name": "cgx",
+  "displayName": "cgx — Codebase Knowledge Graph",
+  "description": "Turn any Git repo into a queryable knowledge graph. 10 MCP tools answer architectural questions (blast radius, hotspots, dead code, ownership) in ~50–200 tokens instead of reading source files.",
+  "version": "0.3.3",
+  "author": "AayushBahukhandi",
+  "homepage": "https://aayushbahukhandi.github.io/cgx/",
+  "repository": "https://github.com/AayushBahukhandi/cgx",
+  "license": "MIT",
+  "keywords": ["mcp", "codebase", "knowledge-graph", "blast-radius", "dead-code", "hotspots"]
+}
