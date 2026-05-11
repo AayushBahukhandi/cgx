@@ -1,7 +1,23 @@
 <div align="center">
 
-<!-- TODO: Replace docs/demo.gif with your actual demo GIF -->
-<img src="docs/demo.gif" alt="cgx demo" width="100%" />
+<table>
+<tr>
+<td align="center" width="50%">
+
+**CLI**
+
+<video src="https://github.com/AayushBahukhandi/cgx/releases/download/v0.3.2/cgx-cli.mp4" controls autoplay loop muted width="100%"></video>
+
+</td>
+<td align="center" width="50%">
+
+**Web UI**
+
+<video src="https://github.com/AayushBahukhandi/cgx/releases/download/v0.3.2/cgx-web.mp4" controls autoplay loop muted width="100%"></video>
+
+</td>
+</tr>
+</table>
 
 <br />
 
