@@ -6,8 +6,10 @@ description = "CLI for cgx — turn any Git repository into a queryable knowledg
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/AayushBahukhandi/cgx"
-keywords = ["codebase", "knowledge-graph", "static-analysis", "cli", "developer-tools"]
-categories = ["development-tools", "command-line-utilities"]
+homepage = "https://aayushbahukhandi.github.io/cgx/"
+documentation = "https://docs.rs/cgx-cli"
+keywords = ["codebase", "knowledge-graph", "static-analysis", "git", "ast"]
+categories = ["development-tools", "command-line-utilities", "visualization"]
 include = ["src/**", "web-ui-dist/**", "Cargo.toml", "README.md"]
 
 [[bin]]
@@ -15,8 +17,8 @@ name = "cgx"
 path = "src/main.rs"
 
 [dependencies]
-cgx-engine = { path = "../cgx-engine", version = "0.3.1" }
-cgx-mcp = { path = "../cgx-mcp", version = "0.3.1" }
+cgx-engine = { path = "../cgx-engine", version = "0.3.2" }
+cgx-mcp = { path = "../cgx-mcp", version = "0.3.2" }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
