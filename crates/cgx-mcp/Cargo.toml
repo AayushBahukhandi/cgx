@@ -1,6 +1,6 @@
 [package]
 name = "cgx-mcp"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "MCP server for cgx — JSON-RPC stdio server for AI editor integrations"
 readme = "README.md"
@@ -12,7 +12,7 @@ keywords = ["mcp", "ai", "codebase", "knowledge-graph", "lsp"]
 categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
-cgx-engine = { path = "../cgx-engine", version = "0.3.2" }
+cgx-engine = { path = "../cgx-engine", version = "0.3.3" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
