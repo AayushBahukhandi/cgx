@@ -6,14 +6,14 @@
 
 **CLI**
 
-<video src="https://aayushbahukhandi.github.io/cgx/cgx-cli.mp4" controls autoplay loop muted width="100%"></video>
+[![cgx CLI demo](https://aayushbahukhandi.github.io/cgx/thumb-cli.jpg)](https://aayushbahukhandi.github.io/cgx/cgx-cli.mp4)
 
 </td>
 <td align="center" width="50%">
 
 **Web UI**
 
-<video src="https://aayushbahukhandi.github.io/cgx/cgx-web.mp4" controls autoplay loop muted width="100%"></video>
+[![cgx Web UI demo](https://aayushbahukhandi.github.io/cgx/thumb-web.jpg)](https://aayushbahukhandi.github.io/cgx/cgx-web.mp4)
 
 </td>
 </tr>
