@@ -36,6 +36,10 @@
 
 ---
 
+> 🚀 **v0.4.0 just shipped** — `cgx watch` live re-indexing · `cgx query context <symbol>` one-shot agent briefings · Claude Code PreToolUse hook · `cgx clean --orphaned` / `--budget` for cache management · spinner UX + colored update notice. [Release notes →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.4.0)
+
+---
+
 > **A codebase has two graphs.**
 > The structural graph — what calls what.
 > The temporal graph — what changes with what.
@@ -97,6 +101,10 @@ cgx hotspots
 | **Graph Diff** | See how your architecture changed between commits |
 | **Dead Code Detection** | Five categories: unreferenced exports, unreachable private functions, unused variables, disconnected nodes, zombie files — with High/Medium/Low confidence and false-positive hints |
 | **Self-contained binary** | Web UI is embedded in the binary — Homebrew and `cargo install` work out of the box |
+| **Live Re-indexing** | `cgx watch` watches your repo and runs debounced incremental analysis on every file change |
+| **Agent Context Briefing** | `cgx query context <symbol>` returns callers + deps + community + risk in one ~400-token block (vs 2–15K to read a file). Supports `--json`. |
+| **Claude Code Hook** | `cgx setup --hooks` installs a PreToolUse hook that auto-injects file context before every Edit/Write |
+| **Cache Management** | `cgx clean --orphaned` sweeps stale db files; `cgx clean --budget 2G` does LRU eviction. Opt-in auto-eviction via `CGX_MAX_CACHE_BYTES` |
 
 ---
 
@@ -697,6 +705,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## Roadmap
 
+**v0.4.0 — Live Indexing & Agent Workflow (shipped)**
+- [x] `cgx watch` — top-level watch command with debounced incremental re-analyze on file changes (`--debounce-ms` tunable)
+- [x] `cgx query context <symbol>` — one-shot agent briefing: callers + deps + community + risk in ~400 tokens, with `--json` for tool consumption
+- [x] `cgx hook` + `cgx setup --hooks` — opt-in Claude Code PreToolUse hook that injects file context on Edit/Write/MultiEdit
+- [x] `cgx clean --orphaned` — sweeps stale registry entries AND unreferenced `.db` files in `~/.cgx/repos/`
+- [x] `cgx clean --budget <SIZE>` — LRU eviction (e.g. `--budget 2G`); opt-in auto-eviction via `CGX_MAX_CACHE_BYTES` env var
+- [x] `RepoEntry.last_used_at` — touched on every query for LRU tracking
+- [x] Spinner UX during analyze phases (walk / parse / resolve / store / git / cluster) via indicatif
+- [x] Colored "⚡ Update available" notice via `console::style`
+- [x] Bug fix: incremental analyze no longer double-upserts edges (resolved DuckDB ART index error on large repos)
+- [x] Bug fix: `cgx doctor` hints at `cgx clean --orphaned` when orphaned registry entries are detected
+
 **v0.3.2 — Bug Fixes (shipped)**
 - [x] `cgx share` — fixed: viewer now loads the shared graph instead of the published cgx graph when `?data=` URL param is present
 - [x] `cgx publish` — fixed: crash on repos with subdirectories in `assets/` (invalid git tree entry)
@@ -727,7 +747,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 **Next**
 - [ ] `cgx changelog` — generate changelogs from graph diffs
 - [ ] VS Code extension
-- [ ] `cgx watch` with debounced incremental indexing
+- [ ] Per-query token budget (`cgx query <cmd> --budget=tokens` with importance-ranked truncation)
 - [ ] Mermaid diagram auto-commit to docs/ on every push (GitHub Action)
 - [ ] Ruby, Swift, C/C++ parsers
 - [ ] Semantic code search (`cgx query search --semantic` with optional LLM summaries)
