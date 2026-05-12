@@ -16,7 +16,39 @@ use cgx_engine::{
 use tui::{App, AppMode, GraphWidget};
 
 use anyhow::Context;
+use indicatif::{ProgressBar, ProgressStyle};
 use ratatui::layout::Rect;
+
+fn make_step_spinner(quiet: bool, msg: &str) -> Option<ProgressBar> {
+    if quiet || !console::Term::stderr().is_term() {
+        return None;
+    }
+    let pb = ProgressBar::new_spinner();
+    if let Ok(style) = ProgressStyle::with_template("  {spinner:.cyan} {msg}") {
+        pb.set_style(style.tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]));
+    }
+    pb.set_message(msg.to_string());
+    pb.enable_steady_tick(Duration::from_millis(80));
+    Some(pb)
+}
+
+fn finish_step(pb: Option<ProgressBar>, quiet: bool, done_msg: &str) {
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+    if !quiet {
+        println!("  \u{2713} {}", done_msg);
+    }
+}
+
+fn warn_step(pb: Option<ProgressBar>, quiet: bool, warn_msg: &str) {
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+    if !quiet {
+        println!("  \u{26A0} {}", warn_msg);
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "cgx", version, about = "Codebase Knowledge Graph")]
@@ -46,6 +78,30 @@ enum Commands {
 
         #[arg(long)]
         watch: bool,
+
+        #[arg(long)]
+        quiet: bool,
+
+        #[arg(long)]
+        no_git: bool,
+
+        #[arg(long)]
+        no_cluster: bool,
+
+        #[arg(long)]
+        no_hooks: bool,
+
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Watch the repo and re-analyze incrementally on file changes
+    Watch {
+        /// Path to the repository (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Debounce window in milliseconds (default 500)
+        #[arg(long, default_value = "500")]
+        debounce_ms: u64,
 
         #[arg(long)]
         quiet: bool,
@@ -135,6 +191,10 @@ enum Commands {
         /// Dry run: show what would be written without writing
         #[arg(long)]
         dry_run: bool,
+
+        /// Also install a Claude Code PreToolUse hook that injects cgx context on Edit/Write
+        #[arg(long)]
+        hooks: bool,
     },
     /// Print repository summary
     Summary {
@@ -337,6 +397,9 @@ enum Commands {
     },
     /// Run diagnostic checks on your cgx installation
     Doctor {},
+    /// Internal: read a Claude Code PreToolUse JSON payload from stdin and emit context
+    #[command(hide = true)]
+    Hook {},
     /// Remove indexed data for a repository (or all repositories)
     Clean {
         /// Path to the repository (omit to clean current directory)
@@ -345,6 +408,16 @@ enum Commands {
         /// Clean all indexed repositories
         #[arg(long)]
         all: bool,
+
+        /// Remove orphaned data: registry entries whose source path is gone, plus
+        /// any .db files in ~/.cgx/repos/ not referenced by the registry
+        #[arg(long, conflicts_with = "all")]
+        orphaned: bool,
+
+        /// Evict least-recently-used repos until total cache size is below this budget
+        /// (accepts e.g. `500M`, `2G`, `1.5GB`).
+        #[arg(long, value_name = "SIZE", conflicts_with_all = ["all", "orphaned"])]
+        budget: Option<String>,
     },
     /// Check for updates and show how to upgrade cgx
     Update {
@@ -401,6 +474,15 @@ enum QueryCmd {
         id: i64,
         #[arg(long)]
         repo: Option<PathBuf>,
+    },
+    /// One-shot agent briefing: callers + deps + community for a symbol
+    Context {
+        name: String,
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
     },
     /// Find unreferenced exports and dead code
     DeadCode {
@@ -559,6 +641,27 @@ fn main() -> anyhow::Result<()> {
                 )
             }
         }
+        Commands::Watch {
+            path,
+            debounce_ms,
+            quiet,
+            no_git,
+            no_cluster,
+            no_hooks,
+            verbose,
+        } => {
+            let repo_path = path.unwrap_or_else(|| PathBuf::from("."));
+            let resolved_path = resolve_github_path(&repo_path)?;
+            cmd_watch(
+                &resolved_path,
+                debounce_ms,
+                quiet,
+                no_git,
+                no_cluster,
+                no_hooks,
+                verbose,
+            )
+        }
         Commands::Init { name, yes } => cmd_init(name, yes),
         Commands::Status { path } => {
             let repo_path = path.unwrap_or_else(|| PathBuf::from("."));
@@ -601,7 +704,7 @@ fn main() -> anyhow::Result<()> {
             let canonical = repo_path.canonicalize().unwrap_or(repo_path);
             cgx_mcp::server::run(&canonical)
         }
-        Commands::Setup { dry_run } => cmd_setup(dry_run),
+        Commands::Setup { dry_run, hooks } => cmd_setup(dry_run, hooks),
         Commands::Summary { repo } => {
             let repo_path = repo.unwrap_or_else(|| PathBuf::from("."));
             cmd_summary(&repo_path)
@@ -614,6 +717,7 @@ fn main() -> anyhow::Result<()> {
             QueryCmd::Owners { path, repo } => cmd_query_owners(path, repo),
             QueryCmd::Search { query, limit, repo } => cmd_query_search(query, limit, repo),
             QueryCmd::Community { id, repo } => cmd_query_community(id, repo),
+            QueryCmd::Context { name, repo, json } => cmd_query_context(name, repo, json),
             QueryCmd::DeadCode {
                 repo,
                 kind,
@@ -779,9 +883,19 @@ fn main() -> anyhow::Result<()> {
             cmd_timeline(&repo_path, commits, since.as_deref(), json)
         }
         Commands::Doctor {} => cmd_doctor(),
-        Commands::Clean { path, all } => {
+        Commands::Hook {} => cmd_hook(),
+        Commands::Clean {
+            path,
+            all,
+            orphaned,
+            budget,
+        } => {
             if all {
                 cmd_clean_all()
+            } else if orphaned {
+                cmd_clean_orphaned()
+            } else if let Some(b) = budget {
+                cmd_clean_budget(&b)
             } else {
                 let repo_path = path.unwrap_or_else(|| PathBuf::from("."));
                 cmd_clean(&repo_path)
@@ -933,15 +1047,17 @@ fn cmd_analyze(
                     let node_count = db.node_count()?;
                     let edge_count = db.edge_count()?;
                     let breakdown = db.get_language_breakdown()?;
+                    let now = chrono::Utc::now().to_rfc3339();
                     reg.register(cgx_engine::RepoEntry {
                         id: cgx_engine::graph::repo_hash(&canonical),
                         name: repo_name.clone(),
                         path: canonical.clone(),
                         db_path: db.db_path.clone(),
-                        indexed_at: chrono::Utc::now().to_rfc3339(),
+                        indexed_at: now.clone(),
                         node_count,
                         edge_count,
                         language_breakdown: breakdown,
+                        last_used_at: Some(now),
                     });
                     reg.save()?;
 
@@ -986,10 +1102,17 @@ fn cmd_analyze(
     }
 
     // Step 1: Walk files
+    let pb = make_step_spinner(quiet, "Walking files...");
     let files = walk_repo(&canonical)?;
     let file_count = files.len();
+    finish_step(
+        pb,
+        quiet,
+        &format!("Walking files...            {:>4} files found", file_count),
+    );
 
     // Step 2: Parse all files in parallel
+    let pb = make_step_spinner(quiet, "Parsing (parallel)...");
     let registry = ParserRegistry::new();
     let results = registry.parse_all(&files);
 
@@ -1008,6 +1131,14 @@ fn cmd_analyze(
 
     let parse_nodes_count = all_nodes.len();
     let parse_edges_count = all_edges.len();
+    finish_step(
+        pb,
+        quiet,
+        &format!(
+            "Parsing (parallel)...       {:>4} nodes, {:>4} edges",
+            parse_nodes_count, parse_edges_count
+        ),
+    );
 
     // Step 2.5: Create file nodes
     let mut lang_map: std::collections::HashMap<String, &str> = files
@@ -1039,10 +1170,20 @@ fn cmd_analyze(
     all_nodes.extend(file_nodes);
 
     // Step 3: Resolve cross-file symbols
+    let pb = make_step_spinner(quiet, "Resolving imports...");
     let resolved_edges = resolve(&all_nodes, &all_edges, &canonical)?;
     let resolved_count = resolved_edges.len();
+    finish_step(
+        pb,
+        quiet,
+        &format!(
+            "Resolving imports...        {:>4} cross-file links resolved",
+            resolved_count
+        ),
+    );
 
     // Step 4: Store in DuckDB
+    let pb = make_step_spinner(quiet, "Storing graph...");
     db.clear()?;
 
     let db_nodes: Vec<_> = all_nodes
@@ -1103,33 +1244,24 @@ fn cmd_analyze(
         let _ = db.update_test_coverage();
     }
 
-    if !quiet {
-        println!(
-            "  \u{2713} Walking files...            {:>4} files found",
-            file_count
-        );
-        println!(
-            "  \u{2713} Parsing (parallel)...       {:>4} nodes, {:>4} edges",
-            parse_nodes_count, parse_edges_count
-        );
-        println!(
-            "  \u{2713} Resolving imports...        {:>4} cross-file links resolved",
-            resolved_count
-        );
-        println!(
-            "  \u{2713} Storing graph...            saved to {}",
+    finish_step(
+        pb,
+        quiet,
+        &format!(
+            "Storing graph...            saved to {}",
             db.db_path.display()
+        ),
+    );
+    if tag_count > 0 && !quiet {
+        println!(
+            "  \u{2713} Indexing annotations...     {:>4} TODO/FIXME/HACK tags",
+            tag_count
         );
-        if tag_count > 0 {
-            println!(
-                "  \u{2713} Indexing annotations...     {:>4} TODO/FIXME/HACK tags",
-                tag_count
-            );
-        }
     }
 
     // Step 5: Git Intelligence
     if !no_git {
+        let git_pb = make_step_spinner(quiet, "Git layer (churn, ownership, co-change)...");
         let relative_paths: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
         let valid_paths: std::collections::HashSet<&str> =
             relative_paths.iter().map(|s| s.as_str()).collect();
@@ -1222,17 +1354,21 @@ fn cmd_analyze(
                 db.update_in_out_degrees()?;
                 db.compute_coupling()?;
 
-                if !quiet {
-                    println!(
-                        "  \u{2713} Git layer...                {} authors, {} co-change pairs, {} owns edges",
+                finish_step(
+                    git_pb,
+                    quiet,
+                    &format!(
+                        "Git layer...                {} authors, {} co-change pairs, {} owns edges",
                         author_count, co_count, owns_count
-                    );
-                }
+                    ),
+                );
             }
             Err(_) => {
-                if !quiet {
-                    println!("  \u{26A0} Git layer...                not a git repo, skipped");
-                }
+                warn_step(
+                    git_pb,
+                    quiet,
+                    "Git layer...                not a git repo, skipped",
+                );
             }
         }
     }
@@ -1241,20 +1377,26 @@ fn cmd_analyze(
     let _community_count = if no_cluster {
         None
     } else {
+        let cluster_pb = make_step_spinner(quiet, "Clustering (Louvain community detection)...");
         match run_clustering(&db) {
             Ok(count) => {
-                if count > 0 && !quiet {
-                    println!(
-                        "  \u{2713} Clustering...              {} communities detected",
-                        count
+                if count > 0 {
+                    finish_step(
+                        cluster_pb,
+                        quiet,
+                        &format!("Clustering...              {} communities detected", count),
                     );
+                } else if let Some(pb) = cluster_pb {
+                    pb.finish_and_clear();
                 }
                 Some(count)
             }
             Err(e) => {
-                if !quiet {
-                    println!("  \u{26A0} Clustering...              failed: {}", e);
-                }
+                warn_step(
+                    cluster_pb,
+                    quiet,
+                    &format!("Clustering...              failed: {}", e),
+                );
                 None
             }
         }
@@ -1307,8 +1449,32 @@ fn cmd_analyze(
         node_count,
         edge_count,
         language_breakdown: lang_breakdown,
+        last_used_at: Some(indexed_at.clone()),
     });
     reg.save()?;
+
+    // Optional auto-eviction when CGX_MAX_CACHE_BYTES is set.
+    if let Ok(raw) = std::env::var("CGX_MAX_CACHE_BYTES") {
+        match parse_size(&raw) {
+            Ok(target) => match evict_to_budget(target) {
+                Ok((n, _)) if n > 0 && !quiet => {
+                    println!(
+                        "  \u{2713} LRU eviction...             {} repo{} freed to fit {}",
+                        n,
+                        if n == 1 { "" } else { "s" },
+                        fmt_bytes(target)
+                    );
+                }
+                Ok(_) => {}
+                Err(e) if !quiet => eprintln!("  \u{26A0} eviction failed: {}", e),
+                Err(_) => {}
+            },
+            Err(e) if !quiet => {
+                eprintln!("  \u{26A0} CGX_MAX_CACHE_BYTES invalid ({}): {}", raw, e);
+            }
+            Err(_) => {}
+        }
+    }
 
     // Step 8: Generate skill files + install git hooks
     let skill_data = cgx_engine::build_skill_data(&db)?;
@@ -1369,16 +1535,7 @@ fn cmd_analyze_watch(
     no_hooks: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
-    use std::sync::mpsc::{channel, RecvTimeoutError};
-    use std::time::Duration;
-
-    let canonical = repo_path
-        .canonicalize()
-        .unwrap_or_else(|_| repo_path.to_path_buf());
-
-    // Run initial analysis
-    println!("  cgx analyze --watch  (press Ctrl+C to stop)\n");
+    // Initial analysis, then hand off to the shared watch loop.
     cmd_analyze(
         repo_path,
         force,
@@ -1389,6 +1546,68 @@ fn cmd_analyze_watch(
         no_hooks,
         verbose,
     )?;
+    watch_loop(repo_path, 500, quiet, no_git, no_cluster, no_hooks, verbose)
+}
+
+fn cmd_watch(
+    repo_path: &Path,
+    debounce_ms: u64,
+    quiet: bool,
+    no_git: bool,
+    no_cluster: bool,
+    no_hooks: bool,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    use console::style;
+
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
+    println!(
+        "  {} {}",
+        style("cgx watch").cyan().bold(),
+        style(format!("({})", canonical.display())).dim()
+    );
+    println!("  {}", style("press Ctrl+C to stop").dim());
+    println!();
+
+    // Reuse existing analyze on first start (incremental if already indexed).
+    let db = GraphDb::open(&canonical)?;
+    let already = db.node_count().unwrap_or(0) > 0;
+    drop(db);
+    cmd_analyze(
+        repo_path, false, already, quiet, no_git, no_cluster, no_hooks, verbose,
+    )?;
+
+    watch_loop(
+        repo_path,
+        debounce_ms,
+        quiet,
+        no_git,
+        no_cluster,
+        no_hooks,
+        verbose,
+    )
+}
+
+fn watch_loop(
+    repo_path: &Path,
+    debounce_ms: u64,
+    quiet: bool,
+    no_git: bool,
+    no_cluster: bool,
+    no_hooks: bool,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    use console::style;
+    use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+
+    let canonical = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
 
     let (tx, rx) = channel::<Result<Event, notify::Error>>();
 
@@ -1398,68 +1617,102 @@ fn cmd_analyze_watch(
         },
         Config::default().with_poll_interval(Duration::from_millis(200)),
     )?;
-
     watcher.watch(&canonical, RecursiveMode::Recursive)?;
 
-    let debounce_duration = Duration::from_millis(500);
-    let mut last_event_time = None;
+    let debounce_duration = Duration::from_millis(debounce_ms.max(50));
+    let mut last_event_time: Option<std::time::Instant> = None;
+    let mut pending_changes: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-    println!("  Watching {} for changes...\n", canonical.display());
+    println!(
+        "  {}",
+        style(format!("Watching {} for changes...", canonical.display())).dim()
+    );
+    println!();
 
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(event)) => {
-                // Filter out irrelevant events
-                if event.paths.iter().any(|p| {
-                    let s = p.to_string_lossy();
-                    s.contains("/.git/")
-                        || s.contains("/node_modules/")
-                        || s.contains("/target/")
-                        || s.contains("/dist/")
-                        || s.contains("/__pycache__/")
-                        || s.contains("/.cgx/")
-                        || s.ends_with("CGX_SKILL.md")
-                        || s.ends_with("AGENTS.md")
-                        || s.ends_with("~")
-                        || s.ends_with(".tmp")
-                }) {
+                if event.paths.iter().any(|p| ignored_watch_path(p)) {
                     continue;
                 }
-
-                if !quiet {
-                    for path in &event.paths {
-                        println!("  Changed: {}", path.display());
-                    }
+                for path in &event.paths {
+                    pending_changes.insert(path.clone());
                 }
                 last_event_time = Some(std::time::Instant::now());
             }
             Ok(Err(e)) => {
-                eprintln!("  Watch error: {}", e);
+                eprintln!("  {} {}", style("watch error:").yellow(), e);
             }
             Err(RecvTimeoutError::Timeout) => {
-                // Check if debounce period has elapsed
                 if let Some(last) = last_event_time {
                     if last.elapsed() >= debounce_duration {
                         last_event_time = None;
-                        println!("  Re-analyzing...\n");
-                        if let Err(e) = cmd_analyze(
-                            repo_path, false, // force = false
-                            true,  // incremental = true
-                            quiet, no_git, no_cluster, no_hooks, verbose,
-                        ) {
-                            eprintln!("  Analysis error: {}", e);
+                        if !quiet {
+                            let count = pending_changes.len();
+                            let preview: Vec<String> = pending_changes
+                                .iter()
+                                .take(3)
+                                .map(|p| {
+                                    p.strip_prefix(&canonical)
+                                        .unwrap_or(p)
+                                        .display()
+                                        .to_string()
+                                })
+                                .collect();
+                            let suffix = if count > 3 {
+                                format!(" (+{} more)", count - 3)
+                            } else {
+                                String::new()
+                            };
+                            println!(
+                                "  {} {}{}",
+                                style("◆ change detected:").cyan(),
+                                preview.join(", "),
+                                suffix
+                            );
                         }
-                        println!("  Watching for changes...\n");
+                        pending_changes.clear();
+                        if let Err(e) = cmd_analyze(
+                            repo_path, false, true, quiet, no_git, no_cluster, no_hooks, verbose,
+                        ) {
+                            let msg = e.to_string();
+                            let truncated = if msg.len() > 300 {
+                                format!("{}… [{} bytes truncated]", &msg[..300], msg.len() - 300)
+                            } else {
+                                msg
+                            };
+                            eprintln!("  {} {}", style("analysis error:").yellow(), truncated);
+                        }
+                        println!();
                     }
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                break;
-            }
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 
     Ok(())
+}
+
+fn ignored_watch_path(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    s.contains("/.git/")
+        || s.contains("/node_modules/")
+        || s.contains("/target/")
+        || s.contains("/dist/")
+        || s.contains("/build/")
+        || s.contains("/__pycache__/")
+        || s.contains("/.cgx/")
+        || s.contains("/.next/")
+        || s.contains("/.venv/")
+        || s.contains("/venv/")
+        || s.ends_with("CGX_SKILL.md")
+        || s.ends_with("AGENTS.md")
+        || s.ends_with('~')
+        || s.ends_with(".tmp")
+        || s.ends_with(".swp")
+        || s.ends_with(".swx")
+        || s.ends_with(".DS_Store")
 }
 
 fn cmd_status(repo_path: &Path) -> anyhow::Result<()> {
@@ -3096,7 +3349,9 @@ fn cmd_summary(repo_path: &Path) -> anyhow::Result<()> {
 
 fn resolve_repo(repo: Option<PathBuf>) -> PathBuf {
     let p = repo.unwrap_or_else(|| PathBuf::from("."));
-    p.canonicalize().unwrap_or(p)
+    let canonical = p.canonicalize().unwrap_or(p);
+    let _ = cgx_engine::Registry::touch_path(&canonical);
+    canonical
 }
 
 fn resolve_id(all_nodes: &[cgx_engine::Node], name_or_id: &str) -> Option<String> {
@@ -3152,7 +3407,100 @@ fn install_claude_skill(home: &str, cgx_path: &str, dry_run: bool) {
     }
 }
 
-fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
+fn install_claude_code_hook(home: &str, cgx_path: &str, dry_run: bool) {
+    let settings_path = format!("{}/.claude/settings.json", home);
+
+    if dry_run {
+        println!("  → Claude Code hook — would update {}", settings_path);
+        return;
+    }
+
+    let mut json: serde_json::Value = match std::fs::read_to_string(&settings_path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({})),
+        Err(_) => serde_json::json!({}),
+    };
+
+    let root = match json.as_object_mut() {
+        Some(o) => o,
+        None => {
+            println!(
+                "  ⚠ {} is not a JSON object — skipping hook install",
+                settings_path
+            );
+            return;
+        }
+    };
+
+    let hooks_obj = root
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut();
+    let Some(hooks_obj) = hooks_obj else {
+        println!(
+            "  ⚠ `hooks` in {} is not an object — skipping",
+            settings_path
+        );
+        return;
+    };
+
+    let pre = hooks_obj
+        .entry("PreToolUse")
+        .or_insert_with(|| serde_json::json!([]));
+    let Some(pre_arr) = pre.as_array_mut() else {
+        println!(
+            "  ⚠ `hooks.PreToolUse` in {} is not an array — skipping",
+            settings_path
+        );
+        return;
+    };
+
+    // Skip if any existing entry already calls `cgx hook`.
+    let already = pre_arr.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|arr| {
+                arr.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.contains("cgx hook") || s.ends_with("cgx hook"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    });
+
+    if already {
+        println!(
+            "  ✓ Claude Code hook — already installed in {}",
+            settings_path
+        );
+        return;
+    }
+
+    pre_arr.push(serde_json::json!({
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+            {
+                "type": "command",
+                "command": format!("{} hook", cgx_path)
+            }
+        ]
+    }));
+
+    if let Some(parent) = Path::new(&settings_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(&json) {
+        Ok(pretty) => match std::fs::write(&settings_path, pretty) {
+            Ok(()) => println!("  ✓ Claude Code hook — installed in {}", settings_path),
+            Err(e) => println!("  ⚠ failed to write {}: {}", settings_path, e),
+        },
+        Err(e) => println!("  ⚠ failed to serialize settings: {}", e),
+    }
+}
+
+fn cmd_setup(dry_run: bool, hooks: bool) -> anyhow::Result<()> {
     let home = std::env::var("HOME").unwrap_or_default();
     let cgx_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
@@ -3256,6 +3604,10 @@ fn cmd_setup(dry_run: bool) -> anyhow::Result<()> {
 
     // Install Claude Code skill (~/.claude/skills/cgx/SKILL.md)
     install_claude_skill(&home, &cgx_path, dry_run);
+
+    if hooks {
+        install_claude_code_hook(&home, &cgx_path, dry_run);
+    }
 
     println!();
     println!("  Restart your editor for changes to take effect.");
@@ -3581,6 +3933,195 @@ fn cmd_query_search(query: String, limit: u32, repo: Option<PathBuf>) -> anyhow:
     {
         println!("  {}  {:<20}  {}", n.kind, n.name, n.path);
     }
+    Ok(())
+}
+
+fn cmd_query_context(name: String, repo: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+    let db = GraphDb::open(&resolve_repo(repo))?;
+    let all = db.get_all_nodes()?;
+
+    let node_id = resolve_id(&all, &name)
+        .or_else(|| {
+            let q = name.to_lowercase();
+            all.iter()
+                .find(|n| n.path.to_lowercase() == q)
+                .map(|n| n.id.clone())
+        })
+        .or_else(|| {
+            if !name.starts_with("file:") {
+                let candidate = format!("file:{}", name);
+                if all.iter().any(|n| n.id == candidate) {
+                    return Some(candidate);
+                }
+            }
+            None
+        })
+        .ok_or_else(|| anyhow::anyhow!("Node not found: {}", name))?;
+
+    let node_map: std::collections::HashMap<&str, &cgx_engine::Node> =
+        all.iter().map(|n| (n.id.as_str(), n)).collect();
+    let target = node_map
+        .get(node_id.as_str())
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("Resolved id not in node map"))?;
+
+    let mut name_to_ids: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for n in &all {
+        name_to_ids
+            .entry(n.name.as_str())
+            .or_default()
+            .push(n.id.as_str());
+    }
+
+    let edges = db.get_all_edges()?;
+    let mut callers: Vec<&cgx_engine::Node> = Vec::new();
+    let mut deps: Vec<&cgx_engine::Node> = Vec::new();
+    let mut caller_seen = std::collections::HashSet::new();
+    let mut dep_seen = std::collections::HashSet::new();
+
+    let is_dep_edge = |kind: &str| matches!(kind, "CALLS" | "IMPORTS" | "INHERITS");
+    let is_caller_edge = |kind: &str| matches!(kind, "CALLS" | "INHERITS" | "TESTS");
+
+    for e in &edges {
+        // dep: this node -> X
+        if e.src == node_id && is_dep_edge(e.kind.as_str()) {
+            let resolved: Vec<&str> = if node_map.contains_key(e.dst.as_str()) {
+                vec![e.dst.as_str()]
+            } else {
+                name_to_ids
+                    .get(e.dst.as_str())
+                    .map(|v| v.to_vec())
+                    .unwrap_or_default()
+            };
+            for id in resolved {
+                if id == node_id {
+                    continue;
+                }
+                if dep_seen.insert(id.to_string()) {
+                    if let Some(n) = node_map.get(id) {
+                        deps.push(*n);
+                    }
+                }
+            }
+        }
+        // caller: X -> this node (by id or by short name on CALLS edges)
+        if !is_caller_edge(e.kind.as_str()) {
+            continue;
+        }
+        let calls_us = e.dst == node_id
+            || (e.dst == target.name
+                && name_to_ids
+                    .get(target.name.as_str())
+                    .map(|ids| ids.iter().any(|i| *i == node_id))
+                    .unwrap_or(false));
+        if calls_us && e.src != node_id && caller_seen.insert(e.src.clone()) {
+            if let Some(n) = node_map.get(e.src.as_str()) {
+                callers.push(*n);
+            }
+        }
+    }
+
+    // Rank callers by in_degree desc (most-depended-on callers shown first)
+    callers.sort_by_key(|n| std::cmp::Reverse(n.in_degree));
+    deps.sort_by_key(|n| std::cmp::Reverse(n.in_degree));
+
+    let caller_count = callers.len();
+    let dep_count = deps.len();
+    let risk = if caller_count > 50 {
+        "CRITICAL"
+    } else if caller_count > 20 {
+        "HIGH"
+    } else if caller_count > 5 {
+        "MEDIUM"
+    } else {
+        "LOW"
+    };
+
+    let communities = db.get_communities()?;
+    let community_label = communities
+        .iter()
+        .find(|(cid, ..)| *cid == target.community)
+        .map(|(_, l, _, _)| l.clone());
+
+    let mut peers: Vec<&cgx_engine::Node> = all
+        .iter()
+        .filter(|n| n.community == target.community && n.id != node_id && n.kind != "File")
+        .collect();
+    peers.sort_by_key(|n| std::cmp::Reverse(n.in_degree));
+
+    if json {
+        let payload = serde_json::json!({
+            "name": target.name,
+            "kind": target.kind,
+            "path": target.path,
+            "line": target.line_start,
+            "id": target.id,
+            "in_degree": target.in_degree,
+            "out_degree": target.out_degree,
+            "churn": target.churn,
+            "risk": risk,
+            "community": {
+                "id": target.community,
+                "label": community_label,
+            },
+            "callers": callers.iter().take(5).map(|n| serde_json::json!({
+                "name": n.name, "kind": n.kind, "path": n.path, "line": n.line_start,
+            })).collect::<Vec<_>>(),
+            "depends_on": deps.iter().take(5).map(|n| serde_json::json!({
+                "name": n.name, "kind": n.kind, "path": n.path, "line": n.line_start,
+            })).collect::<Vec<_>>(),
+            "community_peers": peers.iter().take(3).map(|n| serde_json::json!({
+                "name": n.name, "kind": n.kind,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    println!(
+        "  context: {} ({}) at {}:{}",
+        target.name, target.kind, target.path, target.line_start
+    );
+    if let Some(label) = community_label {
+        println!("  community: #{} — {}", target.community, label);
+    }
+    println!(
+        "  risk: {} ({} callers, churn {:.2})",
+        risk, caller_count, target.churn
+    );
+    println!();
+
+    if !callers.is_empty() {
+        println!("  Callers ({}):", caller_count);
+        for n in callers.iter().take(5) {
+            println!("    {}  {}  {}:{}", n.kind, n.name, n.path, n.line_start);
+        }
+        if caller_count > 5 {
+            println!("    … {} more", caller_count - 5);
+        }
+        println!();
+    }
+
+    if !deps.is_empty() {
+        println!("  Depends on ({}):", dep_count);
+        for n in deps.iter().take(5) {
+            println!("    {}  {}  {}:{}", n.kind, n.name, n.path, n.line_start);
+        }
+        if dep_count > 5 {
+            println!("    … {} more", dep_count - 5);
+        }
+        println!();
+    }
+
+    let peer_show: Vec<_> = peers.iter().take(3).collect();
+    if !peer_show.is_empty() {
+        println!("  Same community (top):");
+        for n in peer_show {
+            println!("    {}  {}", n.kind, n.name);
+        }
+    }
+
     Ok(())
 }
 
@@ -5861,6 +6402,7 @@ fn cmd_doctor() -> anyhow::Result<()> {
     println!();
 
     // 3. Registry
+    let mut orphaned_count = 0usize;
     match cgx_engine::Registry::load() {
         Ok(reg) => {
             println!("  Registry ({} repos indexed)", reg.repos.len());
@@ -5871,6 +6413,9 @@ fn cmd_doctor() -> anyhow::Result<()> {
                     "\u{2713}"
                 } else {
                     issues += 1;
+                    if !path_ok {
+                        orphaned_count += 1;
+                    }
                     "\u{2717}"
                 };
                 println!(
@@ -5881,6 +6426,18 @@ fn cmd_doctor() -> anyhow::Result<()> {
                     entry.edge_count,
                     if path_ok { "ok" } else { "MISSING" },
                     if db_ok { "ok" } else { "MISSING" }
+                );
+            }
+            if orphaned_count > 0 {
+                println!();
+                println!(
+                    "    hint: {} orphaned {} \u{2014} run `cgx clean --orphaned` to remove",
+                    orphaned_count,
+                    if orphaned_count == 1 {
+                        "entry"
+                    } else {
+                        "entries"
+                    }
                 );
             }
         }
@@ -6115,6 +6672,309 @@ fn cmd_clean_all() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cmd_hook() -> anyhow::Result<()> {
+    use std::io::Read;
+    let mut buf = String::new();
+    if std::io::stdin().read_to_string(&mut buf).is_err() || buf.trim().is_empty() {
+        return Ok(());
+    }
+    let payload: serde_json::Value = match serde_json::from_str(&buf) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    let file_path = payload
+        .pointer("/tool_input/file_path")
+        .and_then(|v| v.as_str());
+    let cwd = payload
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let Some(fp) = file_path else {
+        return Ok(());
+    };
+
+    // Make the path repo-relative so it matches stored node paths.
+    let canonical_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+    let abs = PathBuf::from(fp);
+    let abs = abs.canonicalize().unwrap_or(abs);
+    let rel = abs.strip_prefix(&canonical_cwd).unwrap_or(&abs);
+    let rel_str = rel.to_string_lossy().to_string();
+
+    let db = match GraphDb::open(&canonical_cwd) {
+        Ok(d) => d,
+        Err(_) => return Ok(()),
+    };
+    let all = match db.get_all_nodes() {
+        Ok(n) => n,
+        Err(_) => return Ok(()),
+    };
+
+    let file_id = format!("file:{}", rel_str);
+    let file_node = all
+        .iter()
+        .find(|n| n.id == file_id || n.path == rel_str)
+        .cloned();
+    let Some(target_file) = file_node else {
+        return Ok(());
+    };
+
+    // Find the most-depended-on symbols defined in this file.
+    let mut symbols: Vec<&cgx_engine::Node> = all
+        .iter()
+        .filter(|n| n.path == target_file.path && n.kind != "File")
+        .collect();
+    symbols.sort_by_key(|n| std::cmp::Reverse(n.in_degree));
+
+    let edges = match db.get_all_edges() {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    let inbound: usize = edges
+        .iter()
+        .filter(|e| e.kind == "CALLS" && e.dst == target_file.id)
+        .count();
+
+    println!("──── cgx context for {} ────", target_file.path);
+    println!(
+        "  symbols: {}  in-coupling: {}  churn: {:.2}",
+        symbols.len(),
+        target_file.in_degree.max(inbound as i64),
+        target_file.churn
+    );
+    if !symbols.is_empty() {
+        println!("  high-coupling symbols here:");
+        for n in symbols.iter().take(5) {
+            println!(
+                "    {}  {}  (in:{}, line:{})",
+                n.kind, n.name, n.in_degree, n.line_start
+            );
+        }
+        if symbols.len() > 5 {
+            println!("    … {} more", symbols.len() - 5);
+        }
+    }
+    println!("  hint: `cgx query context <symbol>` for full callers + deps");
+    println!("─────────────────────────────────────────");
+
+    Ok(())
+}
+
+fn parse_size(input: &str) -> anyhow::Result<u64> {
+    let s = input.trim().to_uppercase();
+    if s.is_empty() {
+        anyhow::bail!("empty size");
+    }
+    let (num_part, mult) = if let Some(rest) = s.strip_suffix("GB").or_else(|| s.strip_suffix('G'))
+    {
+        (rest, 1024u64 * 1024 * 1024)
+    } else if let Some(rest) = s.strip_suffix("MB").or_else(|| s.strip_suffix('M')) {
+        (rest, 1024u64 * 1024)
+    } else if let Some(rest) = s.strip_suffix("KB").or_else(|| s.strip_suffix('K')) {
+        (rest, 1024u64)
+    } else if let Some(rest) = s.strip_suffix('B') {
+        (rest, 1u64)
+    } else {
+        (s.as_str(), 1u64)
+    };
+    let n: f64 = num_part
+        .trim()
+        .parse()
+        .with_context(|| format!("could not parse size: {}", input))?;
+    if n < 0.0 {
+        anyhow::bail!("size must be non-negative: {}", input);
+    }
+    Ok((n * mult as f64) as u64)
+}
+
+fn evict_to_budget(target_bytes: u64) -> anyhow::Result<(usize, u64)> {
+    let mut reg = cgx_engine::Registry::load()?;
+
+    // First, sweep unreferenced .db files — they're "free" to delete since
+    // nothing tracks them, and they often dominate disk usage after crashes
+    // or older cgx versions.
+    let repos_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cgx")
+        .join("repos");
+    if repos_dir.exists() {
+        let tracked: std::collections::HashSet<PathBuf> =
+            reg.repos.iter().map(|r| r.db_path.clone()).collect();
+        if let Ok(entries) = std::fs::read_dir(&repos_dir) {
+            let mut orphan_files = 0usize;
+            let mut orphan_bytes: u64 = 0;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("db") {
+                    continue;
+                }
+                if tracked.contains(&path) {
+                    continue;
+                }
+                let sz = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                if std::fs::remove_file(&path).is_ok() {
+                    orphan_files += 1;
+                    orphan_bytes += sz;
+                }
+            }
+            if orphan_files > 0 {
+                println!(
+                    "  \u{2713} swept {} unreferenced db file{} ({} freed)",
+                    orphan_files,
+                    if orphan_files == 1 { "" } else { "s" },
+                    fmt_bytes(orphan_bytes)
+                );
+            }
+        }
+    }
+
+    // Compute current cache size by summing each entry's DB file size.
+    let sized: Vec<(usize, u64)> = reg
+        .repos
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let sz = std::fs::metadata(&r.db_path).map(|m| m.len()).unwrap_or(0);
+            (i, sz)
+        })
+        .collect();
+    let total: u64 = sized.iter().map(|(_, s)| *s).sum();
+    if total <= target_bytes {
+        return Ok((0, total));
+    }
+
+    // Index entries sorted by last_used_at ascending (oldest first).
+    let mut order: Vec<(usize, u64)> = sized.clone();
+    order.sort_by(|(i_a, _), (i_b, _)| {
+        let a = &reg.repos[*i_a];
+        let b = &reg.repos[*i_b];
+        let a_t = a.last_used_at.as_ref().unwrap_or(&a.indexed_at);
+        let b_t = b.last_used_at.as_ref().unwrap_or(&b.indexed_at);
+        a_t.cmp(b_t)
+    });
+
+    let mut to_evict: Vec<usize> = Vec::new();
+    let mut running = total;
+    for (idx, sz) in &order {
+        if running <= target_bytes {
+            break;
+        }
+        to_evict.push(*idx);
+        running = running.saturating_sub(*sz);
+    }
+
+    // Sort descending so we can remove without invalidating earlier indices.
+    to_evict.sort_unstable_by(|a, b| b.cmp(a));
+    let mut evicted = 0usize;
+    let mut freed: u64 = 0;
+    for idx in to_evict {
+        let entry = reg.repos.remove(idx);
+        let sz = std::fs::metadata(&entry.db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if entry.db_path.exists() {
+            let _ = std::fs::remove_file(&entry.db_path);
+        }
+        evicted += 1;
+        freed += sz;
+        println!("  \u{2713} evicted: {}  ({})", entry.name, fmt_bytes(sz));
+    }
+    reg.save()?;
+    Ok((evicted, freed))
+}
+
+fn cmd_clean_budget(budget_str: &str) -> anyhow::Result<()> {
+    let target = parse_size(budget_str)?;
+    println!("  cgx clean --budget {}", fmt_bytes(target));
+    println!("  {}", "\u{2500}".repeat(60));
+    let (evicted, _freed_or_total) = evict_to_budget(target)?;
+    if evicted == 0 {
+        println!("  \u{2713} cache already within budget");
+    } else {
+        println!(
+            "  \u{2713} evicted {} repo{} to fit budget",
+            evicted,
+            if evicted == 1 { "" } else { "s" }
+        );
+    }
+    Ok(())
+}
+
+fn cmd_clean_orphaned() -> anyhow::Result<()> {
+    let mut reg = cgx_engine::Registry::load()?;
+    let (orphaned, kept): (Vec<_>, Vec<_>) = reg.repos.drain(..).partition(|r| !r.path.exists());
+    let entry_removed = orphaned.len();
+    reg.repos = kept;
+
+    for entry in &orphaned {
+        if entry.db_path.exists() {
+            let _ = std::fs::remove_file(&entry.db_path);
+        }
+        println!("  \u{2713} removed orphaned entry: {}", entry.name);
+    }
+    if entry_removed > 0 {
+        reg.save()?;
+    }
+
+    // Sweep .db files in ~/.cgx/repos/ that aren't referenced by any registry entry.
+    let repos_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cgx")
+        .join("repos");
+    let mut file_removed = 0usize;
+    let mut file_freed: u64 = 0;
+    if repos_dir.exists() {
+        let tracked: std::collections::HashSet<PathBuf> =
+            reg.repos.iter().map(|r| r.db_path.clone()).collect();
+        if let Ok(entries) = std::fs::read_dir(&repos_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("db") {
+                    continue;
+                }
+                if tracked.contains(&path) {
+                    continue;
+                }
+                let sz = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                if std::fs::remove_file(&path).is_ok() {
+                    file_removed += 1;
+                    file_freed += sz;
+                }
+            }
+        }
+    }
+
+    if entry_removed == 0 && file_removed == 0 {
+        println!("  \u{2713} no orphaned entries or files found");
+        return Ok(());
+    }
+
+    if entry_removed > 0 {
+        println!(
+            "  \u{2713} cleaned {} orphaned registry {}",
+            entry_removed,
+            if entry_removed == 1 {
+                "entry"
+            } else {
+                "entries"
+            }
+        );
+    }
+    if file_removed > 0 {
+        println!(
+            "  \u{2713} removed {} orphaned db file{} ({} freed)",
+            file_removed,
+            if file_removed == 1 { "" } else { "s" },
+            fmt_bytes(file_freed)
+        );
+    }
+
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UPDATE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6246,16 +7106,24 @@ fn parse_version_parts(version: &str) -> Vec<u64> {
 }
 
 fn print_update_notice(current: &str, latest: &str) {
+    use console::style;
+    let latest = latest.trim_start_matches('v');
     eprintln!();
     eprintln!(
-        "  Update available: {} → {}",
-        current,
-        latest.trim_start_matches('v')
+        "  {} {}",
+        style("⚡ Update available:").yellow().bold(),
+        style(format!("{} → {}", current, latest)).yellow().bold()
     );
-    eprintln!("  Run `cgx update --auto` to upgrade automatically, or:");
+    eprintln!(
+        "  Run {} to upgrade automatically, or:",
+        style("`cgx update --auto`").cyan()
+    );
     eprintln!("    brew upgrade aayushbahukhandi/cgx/cgx");
     eprintln!("    cargo install cgx-cli");
-    eprintln!("  Release notes: https://github.com/AayushBahukhandi/cgx/releases/latest");
+    eprintln!(
+        "  Release notes: {}",
+        style("https://github.com/AayushBahukhandi/cgx/releases/latest").dim()
+    );
     eprintln!();
 }
 

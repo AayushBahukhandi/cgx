@@ -269,16 +269,13 @@ pub fn analyze_repo_incremental(
     let resolved_edges = resolve(&all_node_defs, &all_edge_defs, repo_path)?;
     let resolved_count = resolved_edges.len();
 
-    let graph_edges: Vec<crate::graph::Edge> = all_edge_defs
-        .iter()
-        .map(crate::graph::Edge::from_def)
-        .collect();
+    // Only upsert the resolved edge set — this matches the full-analyze flow and
+    // avoids feeding DuckDB the same edge id twice in close succession, which
+    // hits its INSERT OR REPLACE / ART-index bulk-delete limitation.
     let resolved_graph_edges: Vec<crate::graph::Edge> = resolved_edges
         .iter()
         .map(crate::graph::Edge::from_def)
         .collect();
-
-    db.upsert_edges(&graph_edges)?;
     db.upsert_edges(&resolved_graph_edges)?;
 
     // 9. Git layer

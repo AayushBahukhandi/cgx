@@ -18,6 +18,10 @@ pub struct RepoEntry {
     /// Fraction of nodes per language, e.g. `{"typescript": 0.72, "rust": 0.28}`.
     #[serde(default)]
     pub language_breakdown: HashMap<String, f64>,
+    /// RFC3339 timestamp of the last time this repo was queried or analyzed.
+    /// Falls back to `indexed_at` for entries created before LRU tracking existed.
+    #[serde(default)]
+    pub last_used_at: Option<String>,
 }
 
 /// Global registry of all repositories indexed by cgx, persisted at `~/.cgx/registry.json`.
@@ -71,9 +75,32 @@ impl Registry {
     }
 
     /// Add or replace a repo entry (matched by `id`).
-    pub fn register(&mut self, entry: RepoEntry) {
+    pub fn register(&mut self, mut entry: RepoEntry) {
+        if entry.last_used_at.is_none() {
+            entry.last_used_at = Some(entry.indexed_at.clone());
+        }
         self.repos.retain(|r| r.id != entry.id);
         self.repos.push(entry);
+    }
+
+    /// Bump `last_used_at` on the entry whose canonical path matches `path`.
+    /// Persists the registry on success. Silent no-op if the path isn't registered.
+    pub fn touch_path(path: &Path) -> anyhow::Result<()> {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let mut reg = Self::load()?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut changed = false;
+        for r in &mut reg.repos {
+            if r.path.canonicalize().ok().as_ref() == Some(&canonical) {
+                r.last_used_at = Some(now.clone());
+                changed = true;
+                break;
+            }
+        }
+        if changed {
+            reg.save()?;
+        }
+        Ok(())
     }
 
     /// Look up a repo by its canonical on-disk path.
