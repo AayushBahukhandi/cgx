@@ -1,25 +1,10 @@
 <div align="center">
 
-<table>
-<tr>
-<td align="center" width="50%">
+<a href="https://aayushbahukhandi.github.io/cgx/">
+  <img src="https://raw.githubusercontent.com/AayushBahukhandi/cgx/main/assets/cgx-web-hero.gif" alt="cgx web graph demo" width="100%" />
+</a>
 
-**CLI**
-
-[![cgx CLI demo](https://aayushbahukhandi.github.io/cgx/thumb-cli.jpg)](https://aayushbahukhandi.github.io/cgx/cgx-cli.mp4)
-
-</td>
-<td align="center" width="50%">
-
-**Web UI**
-
-[![cgx Web UI demo](https://aayushbahukhandi.github.io/cgx/thumb-web.jpg)](https://aayushbahukhandi.github.io/cgx/cgx-web.mp4)
-
-</td>
-</tr>
-</table>
-
-<br />
+<br /><br />
 
 # cgx
 
@@ -40,37 +25,76 @@
 
 ---
 
-> **A codebase has two graphs.**
-> The structural graph — what calls what.
-> The temporal graph — what changes with what.
-> No existing tool shows you both. cgx does.
+## A codebase has two graphs
 
----
+```
+   STRUCTURAL                         TEMPORAL
+   what calls what                    what changes together
 
-## What cgx Solves
-
-You have a codebase. You need to understand it, refactor it, or explain it to an AI assistant. The normal approach is reading files — slow, expensive in tokens, and impossible to do at scale.
-
-cgx indexes your entire repo once — parsing every function, class, and import with Tree-sitter, then overlaying your full Git history to build a co-change graph. The result is a queryable knowledge graph stored locally in DuckDB that answers architectural questions in milliseconds.
-
-```bash
-# Instead of reading 40 files to understand blast radius:
-cgx query blast-radius "AuthService"
-# → 14 direct callers, 67 total affected. Risk: HIGH. Done in 0.3s.
-
-# Instead of grep-ing for ownership:
-cgx hotspots
-# → Top 5 files ranked by churn × coupling. The ones to worry about.
-
-# Instead of asking your AI to read everything:
-# CGX_SKILL.md is auto-generated in your repo root.
-# Your AI reads it and queries the graph instead of opening files.
-# get_repo_summary = ~150 tokens. Reading one large source file = ~15,000–50,000 tokens.
+   AuthService                        payments.ts ─┐
+       │                                            │ 87% co-change
+       ├── login()                                  │ (no import edge!)
+       │     └── db.query()           flags.ts  ────┘
+       └── logout()                          ▲
+             └── session.clear()             │
+                                       hidden coupling
+                                       lives here
 ```
 
+Every other code-analysis tool only shows you the left side. cgx builds both — by parsing your AST with Tree-sitter **and** overlaying your full Git history. The temporal graph is where most bugs and refactor risk actually live.
+
 ---
 
-## Features
+## Quick Start
+
+```bash
+# 1. Install
+brew install aayushbahukhandi/cgx/cgx       # or: cargo install cgx-cli
+
+# 2. Index your repo (functions, imports, git history — all in seconds)
+cd your-project && cgx analyze
+
+# 3. Open the WebGL graph in your browser
+cgx view --web
+
+# 4. Ask architectural questions in milliseconds
+cgx query blast-radius "AuthService"        # what breaks if I change this?
+cgx hotspots                                # high churn × coupling = danger zone
+
+# 5. Wire up your AI editor (Cursor, Claude Code, Windsurf, Codex)
+cgx setup
+```
+
+After `cgx analyze`, two files land in your repo root: `CGX_SKILL.md` (instructs your AI to query the graph instead of opening files) and `AGENTS.md` (prose architecture summary). Both auto-regenerate on every commit.
+
+---
+
+## Why it matters
+
+| | cgx | Reading source files |
+|---|---|---|
+| Answer "what breaks if I change `AuthService`?" | `cgx query blast-radius AuthService` → ~50 tokens, 0.3s | open 40 files → 15,000–50,000 tokens |
+| Architecture overview for an AI agent | `get_repo_summary` → **~150 tokens** | recursive ls + reads → 50,000+ tokens |
+| Find hidden coupling | `cgx hotspots` → co-change scores | grep-and-pray |
+| One-shot symbol briefing | `cgx query context login` → **~400 tokens** | 2–15K per file |
+
+---
+
+## Highlighted Features
+
+| Feature | What it does |
+|---|---|
+| **Tree-sitter AST parsing** | TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP — parsed in parallel |
+| **Git history overlay** | Churn scores, co-change edges, ownership — the temporal graph |
+| **`cgx query blast-radius`** | Direct + transitive callers with risk scoring |
+| **`cgx watch`** | Debounced live re-indexing on every save |
+| **`cgx query context <sym>`** | Callers + deps + community + risk in one ~400-token block |
+| **MCP server (10 tools)** | Cursor, Claude Code, Windsurf, Codex — `_summary` field on every response |
+| **Claude Code PreToolUse hook** | Auto-injects file context before every Edit/Write |
+| **WebGL graph + share links** | Sigma.js renders thousands of nodes; `cgx share` → no-install gist viewer |
+
+<details>
+<summary><strong>See the full feature list (30+)</strong></summary>
 
 | Feature | Description |
 |---|---|
@@ -105,6 +129,8 @@ cgx hotspots
 | **Agent Context Briefing** | `cgx query context <symbol>` returns callers + deps + community + risk in one ~400-token block (vs 2–15K to read a file). Supports `--json`. |
 | **Claude Code Hook** | `cgx setup --hooks` installs a PreToolUse hook that auto-injects file context before every Edit/Write |
 | **Cache Management** | `cgx clean --orphaned` sweeps stale db files; `cgx clean --budget 2G` does LRU eviction. Opt-in auto-eviction via `CGX_MAX_CACHE_BYTES` |
+
+</details>
 
 ---
 
@@ -146,7 +172,7 @@ fish_add_path "$HOME/.cargo/bin"
 
 ### Pre-built binary (Windows, macOS, Linux)
 
-Download the latest release from [GitHub Releases](https://github.com/AayushBahukhandi/cgx/releases/latest). Replace `VERSION` with the tag shown on that page (e.g. `v0.1.7`).
+Download the latest release from [GitHub Releases](https://github.com/AayushBahukhandi/cgx/releases/latest). Replace `VERSION` with the tag shown on that page (e.g. `v0.4.0`).
 
 ```bash
 # macOS arm64 (Apple Silicon)
@@ -182,39 +208,125 @@ cgx update --auto   # detect your install method and upgrade automatically
 
 Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 
+<details>
+<summary>Upgrade notes for older versions</summary>
+
 > **On v0.3.0?** Run `cgx update --auto` or reinstall. v0.3.1 fixes `cgx complexity --combined` (now uses file-level churn), adds `cgx test coverage --by=community`, improves `cgx todos` empty-result messages, shows available built-in rules in `cgx rules list`, and adds a stale-index warning to `cgx complexity`. Also adds previously undocumented commands: `cgx impact`, `cgx init`, `cgx list`, `cgx query deps`, `cgx query community`.
 >
 > **On v0.2.x?** Run `cgx update --auto` or reinstall. v0.3.0 adds `cgx todos`, `cgx docs coverage`, `cgx complexity`, `cgx test coverage/gaps`, `cgx deps health`, `cgx review`, `cgx rules check`, `cgx dupes`, `cgx explain`, and `cgx timeline` — a full suite of advanced code intelligence commands. Re-run `cgx analyze --force` after upgrading to refresh the graph with new columns (complexity, doc_comment, is_tested, test_count).
 >
 > **On v0.1.9 or older?** Run `cgx update --auto` or reinstall. v0.2.0 added dead code detection (`cgx query dead-code`) and fixed cross-file call tracking — `new ClassName()`, static method calls, and module-level function calls now all create proper edges, eliminating the majority of false positives.
 
+</details>
+
 ---
 
-## Quick Start
+## AI Integration
+
+### Method 1 — Skills (works everywhere, zero config)
+
+After `cgx analyze`, a `CGX_SKILL.md` file appears in your repo root. Any AI assistant that can read files and run terminal commands — Claude Code, Cursor, GitHub Copilot Chat, Gemini CLI — will automatically use it.
+
+The skill file tells your AI:
+- When to call `cgx query` instead of reading source files
+- Both MCP tool names (`get_blast_radius`) and CLI equivalents (`cgx query blast-radius`) in one place
+- Live stats about your codebase (hotspots, communities, entry points)
+- Mandatory trigger language so the AI fires cgx without being asked
+
+**Result:** Your AI stops reading source files to answer an architectural question and runs one `cgx query` command instead. `get_repo_summary` costs ~150 tokens; reading a single large source file costs 15,000–50,000. Same answer, without opening a file.
+
+### Method 1b — `/cgx` slash command in Claude Code
 
 ```bash
-# 1. Index your repo
-cd your-project
-cgx analyze
-
-# 2. Open the browser graph (auto-analyzes if not indexed yet)
-cgx view --web
-
-# 3. Share with anyone — no install required on their end
-cgx share
-
-# 4. See your riskiest files
-cgx hotspots
-
-# 5. Set up your AI editor
-cgx setup
+cgx setup   # installs ~/.claude/skills/cgx/SKILL.md + registers /cgx
 ```
 
-After `cgx analyze`, two files appear in your repo root:
-- `CGX_SKILL.md` — tells your AI assistant how to query the graph instead of reading files
-- `AGENTS.md` — a prose architecture summary: communities, hotspots, entry points, god nodes
+After running `cgx setup`, type `/cgx` in Claude Code to analyze any repo interactively — even repos that haven't been pre-indexed. Works like `/graphify` but for structural code queries rather than knowledge graph building.
 
-Both regenerate automatically on every `git commit` via installed hooks.
+### Method 2 — MCP Server (Cursor, Claude Code, Windsurf, Codex/OpenCode)
+
+```bash
+cgx setup    # auto-detects your editors and writes their MCP configs
+```
+
+Restart your editor. cgx now exposes 10 typed tools your AI can call directly:
+
+| Tool | What it answers | Typical tokens |
+|---|---|---|
+| `get_repo_summary` | Architecture overview: nodes, communities, hotspots, god nodes | ~150 |
+| `find_symbol` | Where is X defined? File + line | ~50 |
+| `get_neighbors` | What does X depend on? What depends on X? | ~50 |
+| `get_blast_radius` | What breaks if I change X? Risk level + affected count | ~50 |
+| `get_call_chain` | Trace from A to B through the call graph | ~100 |
+| `get_community` | All nodes in the auth/db/payments cluster | ~200 |
+| `search_graph` | Full-text search over all symbol names | ~100 |
+| `get_hotspots` | Highest churn × coupling files | ~100 |
+| `get_file_owners` | Git blame ownership for any file | ~50 |
+| `get_dead_code` | Unreferenced exports, unreachable functions, zombie files — with confidence + false-positive hints | ~100 |
+| `run_query` | Raw SQL SELECT against the graph (read-only) | varies |
+
+Every response includes a `_summary` field — a plain-text sentence the model reads first before parsing JSON, so it can skip deeper inspection when not needed.
+
+**Example:** Ask "refactor the login function to add rate limiting" in Claude Code. It calls `get_blast_radius`, `get_neighbors`, and `get_file_owners` — 3 tool calls, under **200 tokens total** — then writes the code knowing exactly what it needs to update.
+
+---
+
+## How cgx Compares
+
+|  | cgx | GitNexus | Graphify |
+|---|---|---|---|
+| Tree-sitter parsing | ✅ | ✅ | ✅ |
+| JSX/TSX caller tracking | ✅ | ❌ | ❌ |
+| Cross-file resolution | ✅ | ✅ | ❌ |
+| Git history (churn/blame) | ✅ | ❌ | ❌ |
+| Co-change graph | ✅ | ❌ | ❌ |
+| Dead code detection | ✅ | ❌ | ❌ |
+| Cognitive complexity scoring | ✅ | ❌ | ❌ |
+| TODO/FIXME annotation index | ✅ | ❌ | ❌ |
+| Doc coverage reporting | ✅ | ❌ | ❌ |
+| Test coverage overlay | ✅ | ❌ | ❌ |
+| Dependency CVE health | ✅ | ❌ | ❌ |
+| PR review brief generator | ✅ | ❌ | ❌ |
+| Architecture fitness rules | ✅ | ❌ | ❌ |
+| Duplicate / clone detection | ✅ | ❌ | ❌ |
+| Architecture explainer | ✅ | ❌ | ❌ |
+| Commit timeline snapshots | ✅ | ❌ | ❌ |
+| Terminal TUI | ✅ | ❌ | ❌ |
+| WebGL browser graph | ✅ | ❌ | ✅ |
+| AI Chat (multi-provider) | ✅ | ❌ | ❌ |
+| Ollama / local LLM | ✅ | ❌ | ❌ |
+| MCP server | ✅ | ✅ | ❌ |
+| Skills system | ✅ | ❌ | ✅ |
+| Share links (no install) | ✅ | ❌ | ❌ |
+| GitHub Pages publish | ✅ | ❌ | ❌ |
+| Self-contained binary | ✅ | ❌ | ❌ |
+| LLM required for indexing | ❌ Never | ❌ Never | ✅ Always |
+| Session context overhead | ~1,300 tokens | unknown | ~15,000 tokens |
+| `get_repo_summary` cost | ~150 tokens | n/a MCP | no MCP |
+| License | MIT | Non-commercial | MIT |
+
+---
+
+## Demo videos
+
+<table>
+<tr>
+<td align="center" width="50%">
+
+**CLI**
+
+[![cgx CLI demo](https://aayushbahukhandi.github.io/cgx/thumb-cli.jpg)](https://aayushbahukhandi.github.io/cgx/cgx-cli.mp4)
+
+</td>
+<td align="center" width="50%">
+
+**Web UI**
+
+[![cgx Web UI demo](https://aayushbahukhandi.github.io/cgx/thumb-web.jpg)](https://aayushbahukhandi.github.io/cgx/cgx-web.mp4)
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -423,69 +535,9 @@ cgx list                       # list all indexed repos with node/edge counts
 
 ---
 
-## AI Integration
-
-### Method 1 — Skills (works everywhere, zero config)
-
-After `cgx analyze`, a `CGX_SKILL.md` file appears in your repo root.
-Any AI assistant that can read files and run terminal commands — Claude Code,
-Cursor, GitHub Copilot Chat, Gemini CLI — will automatically use it.
-
-The skill file tells your AI:
-- When to call `cgx query` instead of reading source files
-- Both MCP tool names (`get_blast_radius`) and CLI equivalents (`cgx query blast-radius`) in one place
-- Live stats about your codebase (hotspots, communities, entry points)
-- Mandatory trigger language so the AI fires cgx without being asked
-
-**Result:** Your AI stops reading source files to answer an architectural question
-and runs one `cgx query` command instead. `get_repo_summary` costs ~150 tokens;
-reading a single large source file costs 15,000–50,000. Same answer, without opening a file.
-
-### Method 1b — `/cgx` slash command in Claude Code
-
-```bash
-cgx setup   # installs ~/.claude/skills/cgx/SKILL.md + registers /cgx
-```
-
-After running `cgx setup`, type `/cgx` in Claude Code to analyze any repo
-interactively — even repos that haven't been pre-indexed. Works like `/graphify`
-but for structural code queries rather than knowledge graph building.
-
-### Method 2 — MCP Server (for Cursor, Claude Code, Windsurf, Codex/OpenCode)
-
-```bash
-cgx setup    # auto-detects your editors and writes their MCP configs
-```
-
-Restart your editor. cgx now exposes 10 typed tools your AI can call directly:
-
-| Tool | What it answers | Typical tokens |
-|---|---|---|
-| `get_repo_summary` | Architecture overview: nodes, communities, hotspots, god nodes | ~150 |
-| `find_symbol` | Where is X defined? File + line | ~50 |
-| `get_neighbors` | What does X depend on? What depends on X? | ~50 |
-| `get_blast_radius` | What breaks if I change X? Risk level + affected count | ~50 |
-| `get_call_chain` | Trace from A to B through the call graph | ~100 |
-| `get_community` | All nodes in the auth/db/payments cluster | ~200 |
-| `search_graph` | Full-text search over all symbol names | ~100 |
-| `get_hotspots` | Highest churn × coupling files | ~100 |
-| `get_file_owners` | Git blame ownership for any file | ~50 |
-| `get_dead_code` | Unreferenced exports, unreachable functions, zombie files — with confidence + false-positive hints | ~100 |
-| `run_query` | Raw SQL SELECT against the graph (read-only) | varies |
-
-Every response includes a `_summary` field — a plain-text sentence the model
-reads first before parsing JSON, so it can skip deeper inspection when not needed.
-
-**Example:** Ask "refactor the login function to add rate limiting" in Claude Code.
-It calls `get_blast_radius`, `get_neighbors`, and `get_file_owners` — 3 tool calls,
-under **200 tokens total** — then writes the code knowing exactly what it needs to update.
-
----
-
 ## AI Chat
 
-The browser UI (`cgx view --web`) includes a built-in chat panel.
-Ask natural language questions about your codebase.
+The browser UI (`cgx view --web`) includes a built-in chat panel. Ask natural language questions about your codebase.
 
 ### Supported AI Providers
 
@@ -525,61 +577,7 @@ cgx serve                              # start server (auto-opens browser)
 cgx serve --no-open                    # start server without opening browser
 ```
 
-> **Privacy note:** cgx chat sends only graph metadata to the AI — node names,
-> file paths, churn scores, community labels. It never sends your source code.
-> With Ollama, nothing leaves your machine.
-
----
-
-## Git Intelligence — The Differentiator
-
-Every other codebase analysis tool only knows the **structural graph** —
-what imports what right now. cgx also builds the **temporal graph** from
-your git history.
-
-**Co-change edges** — files that always change together in commits,
-even if they don't import each other. Hidden coupling.
-
-**Churn scores** — how frequently each node changes, normalized 0–1.
-Combined with in-degree, this gives you the hotspot score.
-
-**Ownership** — who owns what, by git blame line count.
-
----
-
-## How cgx Compares
-
-|  | cgx | GitNexus | Graphify |
-|---|---|---|---|
-| Tree-sitter parsing | ✅ | ✅ | ✅ |
-| JSX/TSX caller tracking | ✅ | ❌ | ❌ |
-| Cross-file resolution | ✅ | ✅ | ❌ |
-| Git history (churn/blame) | ✅ | ❌ | ❌ |
-| Co-change graph | ✅ | ❌ | ❌ |
-| Dead code detection | ✅ | ❌ | ❌ |
-| Cognitive complexity scoring | ✅ | ❌ | ❌ |
-| TODO/FIXME annotation index | ✅ | ❌ | ❌ |
-| Doc coverage reporting | ✅ | ❌ | ❌ |
-| Test coverage overlay | ✅ | ❌ | ❌ |
-| Dependency CVE health | ✅ | ❌ | ❌ |
-| PR review brief generator | ✅ | ❌ | ❌ |
-| Architecture fitness rules | ✅ | ❌ | ❌ |
-| Duplicate / clone detection | ✅ | ❌ | ❌ |
-| Architecture explainer | ✅ | ❌ | ❌ |
-| Commit timeline snapshots | ✅ | ❌ | ❌ |
-| Terminal TUI | ✅ | ❌ | ❌ |
-| WebGL browser graph | ✅ | ❌ | ✅ |
-| AI Chat (multi-provider) | ✅ | ❌ | ❌ |
-| Ollama / local LLM | ✅ | ❌ | ❌ |
-| MCP server | ✅ | ✅ | ❌ |
-| Skills system | ✅ | ❌ | ✅ |
-| Share links (no install) | ✅ | ❌ | ❌ |
-| GitHub Pages publish | ✅ | ❌ | ❌ |
-| Self-contained binary | ✅ | ❌ | ❌ |
-| LLM required for indexing | ❌ Never | ❌ Never | ✅ Always |
-| Session context overhead | ~1,300 tokens | unknown | ~15,000 tokens |
-| `get_repo_summary` cost | ~150 tokens | n/a MCP | no MCP |
-| License | MIT | Non-commercial | MIT |
+> **Privacy note:** cgx chat sends only graph metadata to the AI — node names, file paths, churn scores, community labels. It never sends your source code. With Ollama, nothing leaves your machine.
 
 ---
 
@@ -670,8 +668,7 @@ cgx-mcp     — MCP stdio server (JSON-RPC 2.0)
 web-ui      — Vite + React + Sigma.js WebGL graph
 ```
 
-The graph is stored locally at `~/.cgx/repos/<hash>.db` — one DuckDB file
-per repo. No external services, no cloud, no network required for local use.
+The graph is stored locally at `~/.cgx/repos/<hash>.db` — one DuckDB file per repo. No external services, no cloud, no network required for local use.
 
 ---
 
@@ -717,6 +714,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 - [x] Bug fix: incremental analyze no longer double-upserts edges (resolved DuckDB ART index error on large repos)
 - [x] Bug fix: `cgx doctor` hints at `cgx clean --orphaned` when orphaned registry entries are detected
 
+<details>
+<summary><strong>Previous releases (v0.3.x and earlier)</strong></summary>
+
 **v0.3.2 — Bug Fixes (shipped)**
 - [x] `cgx share` — fixed: viewer now loads the shared graph instead of the published cgx graph when `?data=` URL param is present
 - [x] `cgx publish` — fixed: crash on repos with subdirectories in `assets/` (invalid git tree entry)
@@ -744,6 +744,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 - [x] `cgx explain` — architecture explainer for symbols, folders, and full onboarding
 - [x] `cgx timeline` — git commit timeline snapshots
 
+</details>
+
 **Next**
 - [ ] `cgx changelog` — generate changelogs from graph diffs
 - [ ] VS Code extension
@@ -752,24 +754,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 - [ ] Ruby, Swift, C/C++ parsers
 - [ ] Semantic code search (`cgx query search --semantic` with optional LLM summaries)
 - [ ] cgx cloud — shared graphs for teams (hosted)
-
----
-
-## Setting Up Distribution
-
-### crates.io
-
-1. Set the `CARGO_REGISTRY_TOKEN` secret in your GitHub repo settings.
-2. The release workflow (`.github/workflows/release.yml`) publishes all three crates automatically on every `v*` tag.
-3. Users install with `cargo install cgx-cli`.
-
-### GitHub Pages (hosted viewer)
-
-Already live at `https://aayushbahukhandi.github.io/cgx/`. The `deploy-pages.yml` workflow rebuilds and redeploys it on every release tag automatically.
-
-### Homebrew
-
-The tap lives at [AayushBahukhandi/homebrew-cgx](https://github.com/AayushBahukhandi/homebrew-cgx). The formula is updated automatically by the `update-homebrew-tap` job in `release.yml` every time a `v*` tag is pushed — no manual steps needed.
 
 ---
 
