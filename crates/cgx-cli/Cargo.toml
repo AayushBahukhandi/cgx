@@ -1,6 +1,6 @@
 [package]
 name = "cgx-cli"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "CLI for cgx — turn any Git repository into a queryable knowledge graph"
 readme = "README.md"
@@ -17,8 +17,8 @@ name = "cgx"
 path = "src/main.rs"
 
 [dependencies]
-cgx-engine = { path = "../cgx-engine", version = "0.5.0" }
-cgx-mcp = { path = "../cgx-mcp", version = "0.5.0" }
+cgx-engine = { path = "../cgx-engine", version = "0.5.1" }
+cgx-mcp = { path = "../cgx-mcp", version = "0.5.1" }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

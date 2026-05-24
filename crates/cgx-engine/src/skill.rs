@@ -440,8 +440,21 @@ fn install_one_hook(path: &Path) -> bool {
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .unwrap_or_else(|| "cgx".to_string());
+    // Skip during `git bisect` (BISECT_LOG exists) and `git rebase`/`merge`
+    // (HEAD_DETACHED via merge/rebase state files). Regenerating skill files
+    // at every step of a bisect dirties the working tree and breaks the
+    // next checkout. Users can still `cgx analyze` manually when they exit
+    // the operation.
     let content = format!(
-        "#!/bin/sh\n# cgx-managed\n{} analyze --incremental --quiet\n",
+        "#!/bin/sh\n# cgx-managed\n\
+         GIT_DIR=$(git rev-parse --git-dir 2>/dev/null) || exit 0\n\
+         if [ -f \"$GIT_DIR/BISECT_LOG\" ] || \
+            [ -f \"$GIT_DIR/MERGE_HEAD\" ] || \
+            [ -d \"$GIT_DIR/rebase-merge\" ] || \
+            [ -d \"$GIT_DIR/rebase-apply\" ]; then\n\
+           exit 0\n\
+         fi\n\
+         {} analyze --incremental --quiet\n",
         bin
     );
     if std::fs::write(path, content).is_err() {

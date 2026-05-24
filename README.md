@@ -21,7 +21,9 @@
 
 ---
 
-> 🚀 **v0.5.0 just shipped** — `cgx docs generate --vault` turns your indexed repo into an Obsidian-ready documentation vault (project overview, dep purposes, unused-dep detection, per-file TL;DR, role classification) · docstring extraction now covers Rust, Go, Java, PHP, Python (was TypeScript-only) · `cgx bisect-script` plugs into `git bisect run` to find commits that break declarative graph predicates · new `GraphDb` queries: `get_file_summary`, `get_public_api`, `list_entry_points`, `get_cross_cluster_deps`. [Release notes →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.0)
+> 🚀 **v0.5.1** — bisect-friendly git hooks: the cgx-managed `post-checkout` / `post-commit` hooks now skip during `git bisect`, `git rebase`, and `git merge`, so `cgx bisect-script` works inside `git bisect run` without dirtying `AGENTS.md` / `CGX_SKILL.md`. Bisect-script also now exits `125` (skip) on empty predicate files and when `rule_violations_max` is set without `--rule-violations N`, instead of silently passing. [v0.5.1 →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.1)
+>
+> **v0.5.0** — `cgx docs generate --vault` turns your indexed repo into an Obsidian-ready documentation vault (project overview, dep purposes, unused-dep detection, per-file TL;DR, role classification) · docstring extraction now covers Rust, Go, Java, PHP, Python (was TypeScript-only) · `cgx bisect-script` plugs into `git bisect run` to find commits that break declarative graph predicates · new `GraphDb` queries: `get_file_summary`, `get_public_api`, `list_entry_points`, `get_cross_cluster_deps`. [Release notes →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.0)
 >
 > Earlier: [v0.4.0](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.4.0) — `cgx watch`, `cgx query context`, Claude Code PreToolUse hook, cache management.
 
@@ -295,6 +297,8 @@ Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 <details>
 <summary>Upgrade notes for older versions</summary>
 
+> **On v0.5.0?** Run `cgx update --auto` or reinstall. v0.5.1 fixes the cgx-managed git hooks so they no-op during `git bisect` / `rebase` / `merge` (previously `git bisect run cgx bisect-script` would dirty `AGENTS.md` and `CGX_SKILL.md` at every step and break the next checkout). `cgx bisect-script` also now exits `125` (skip) instead of silently passing when the predicate file is empty or when `rule_violations_max` is set without `--rule-violations N`. **Re-run `cgx analyze` once after upgrading** so the new hook template is installed.
+>
 > **On v0.4.x?** Run `cgx update --auto` or reinstall. v0.5.0 adds `cgx docs generate --vault` (Obsidian documentation vault with project overview, per-file TL;DR, role classification, dep purposes + unused-dep detection, AI prose stubs), `cgx bisect-script` (drop into `git bisect run`), docstring extraction for Rust/Go/Java/PHP/Python (was TypeScript-only), and four new `GraphDb` query methods. Re-run `cgx analyze` after upgrading to populate the new `doc_comment` data.
 >
 > **On v0.3.0?** Run `cgx update --auto` or reinstall. v0.3.1 fixes `cgx complexity --combined` (now uses file-level churn), adds `cgx test coverage --by=community`, improves `cgx todos` empty-result messages, shows available built-in rules in `cgx rules list`, and adds a stale-index warning to `cgx complexity`. Also adds previously undocumented commands: `cgx impact`, `cgx init`, `cgx list`, `cgx query deps`, `cgx query community`.
