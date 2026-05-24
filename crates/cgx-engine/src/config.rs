@@ -23,6 +23,8 @@ pub struct CgxConfig {
     pub skill: SkillConfig,
     #[serde(default)]
     pub export: ExportConfig,
+    #[serde(default)]
+    pub docs: DocsConfig,
 }
 
 impl CgxConfig {
@@ -339,4 +341,51 @@ fn default_max_nodes() -> usize {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocsConfig {
+    #[serde(default = "default_docs_output_dir")]
+    pub output_dir: String,
+    #[serde(default)]
+    pub vault_path: String,
+    #[serde(default = "default_docs_layout")]
+    pub layout: String,
+    #[serde(default = "default_wiki_links_style")]
+    pub wiki_links: String,
+    #[serde(default = "default_true")]
+    pub prompt_packets: bool,
+    #[serde(default = "default_true")]
+    pub frontmatter: bool,
+    #[serde(default = "default_true")]
+    pub include_dead_code: bool,
+    #[serde(default = "default_true")]
+    pub include_duplicates: bool,
+}
+
+impl Default for DocsConfig {
+    fn default() -> Self {
+        Self {
+            output_dir: default_docs_output_dir(),
+            vault_path: String::new(),
+            layout: default_docs_layout(),
+            wiki_links: default_wiki_links_style(),
+            prompt_packets: true,
+            frontmatter: true,
+            include_dead_code: true,
+            include_duplicates: true,
+        }
+    }
+}
+
+fn default_docs_output_dir() -> String {
+    "./cgx-docs".to_string()
+}
+
+fn default_docs_layout() -> String {
+    "layered".to_string()
+}
+
+fn default_wiki_links_style() -> String {
+    "obsidian".to_string()
 }

@@ -21,7 +21,9 @@
 
 ---
 
-> 🚀 **v0.4.0 just shipped** — `cgx watch` live re-indexing · `cgx query context <symbol>` one-shot agent briefings · Claude Code PreToolUse hook · `cgx clean --orphaned` / `--budget` for cache management · spinner UX + colored update notice. [Release notes →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.4.0)
+> 🚀 **v0.5.0 just shipped** — `cgx docs generate --vault` turns your indexed repo into an Obsidian-ready documentation vault (project overview, dep purposes, unused-dep detection, per-file TL;DR, role classification) · docstring extraction now covers Rust, Go, Java, PHP, Python (was TypeScript-only) · `cgx bisect-script` plugs into `git bisect run` to find commits that break declarative graph predicates · new `GraphDb` queries: `get_file_summary`, `get_public_api`, `list_entry_points`, `get_cross_cluster_deps`. [Release notes →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.0)
+>
+> Earlier: [v0.4.0](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.4.0) — `cgx watch`, `cgx query context`, Claude Code PreToolUse hook, cache management.
 
 ---
 
@@ -69,6 +71,83 @@ After `cgx analyze`, two files land in your repo root: `CGX_SKILL.md` (instructs
 
 ---
 
+## Generating a documentation vault (new in v0.5)
+
+```bash
+cgx docs generate --vault           # writes into your Obsidian vault (auto-detected or configured)
+cgx docs generate --local           # writes into ./cgx-docs/
+cgx docs generate --vault --force   # full rebuild
+cgx docs generate --vault --incremental   # only regenerate files whose graph slice changed
+cgx docs status                     # show what would regenerate
+cgx docs prompts --next             # stream unfilled AI prose stubs into Claude/Cursor
+```
+
+The vault has a layered structure built straight from your graph:
+
+```text
+cgx-docs/
+├── README.md                       ← project description + dep summary + nav
+├── 00-Overview/
+│   ├── Architecture.md             ← stack, languages, dep purposes + unused-dep detection,
+│   │                                 files-by-role, largest groups, entry points
+│   ├── HowToNavigate.md            ← reading path for new contributors
+│   └── Glossary.md                 ← node kinds + communities
+├── 10-PublicAPI/<group>.md         ← exported symbols per source directory
+├── 20-Architecture/
+│   ├── Groups.md                   ← primary navigation: by source directory
+│   ├── Communities.md              ← raw Louvain clusters
+│   ├── CrossClusterDeps.md
+│   └── EntryPoints.md
+├── 30-Modules/<group>/<file>.md    ← per-file: TL;DR + role badge + structure table with
+│                                     inline docstring descriptions + callers/callees +
+│                                     tests + ownership + `<!-- cgx-prompt -->` AI stub
+├── 40-Risk/
+│   ├── Hotspots.md
+│   ├── ComplexityHigh.md
+│   ├── DeadCode.md
+│   └── Duplicates.md
+└── 50-Ownership/
+    ├── Owners.md
+    └── BlameGraph.md
+```
+
+cgx itself never calls an LLM. Each module note ends with a self-contained `<!-- cgx-prompt -->` block that bundles every fact your AI needs to write prose (exported symbols, callers/callees, tests, owners, metrics, existing docstrings). Paste it into Claude/Cursor — your schedule, your API key, your cost.
+
+Configure the default vault in `.cgx/config.toml`:
+
+```toml
+[docs]
+vault_path = "/Users/you/Documents/Obsidian Vault"   # used by --vault
+output_dir = "./cgx-docs"                             # used by --local
+wiki_links = "obsidian"                               # or "markdown"
+prompt_packets = true
+frontmatter = true
+```
+
+---
+
+## git bisect on the graph (new in v0.5)
+
+`cgx bisect-script` plugs into `git bisect run` and evaluates declarative predicates over the freshly-indexed graph at each commit:
+
+```bash
+# 1. Generate a starter predicate file
+cgx bisect-script --example > .cgx/bisect.toml
+
+# 2. Edit .cgx/bisect.toml — anything you can express against the graph:
+#    node_count_min, nodes_exist, nodes_missing, nodes_alive, rule_violations_max
+
+# 3. Bisect
+git bisect start
+git bisect bad HEAD
+git bisect good v0.4.1
+git bisect run cgx bisect-script --analyze
+```
+
+Exit codes: `0` = good, `1` = bad, `125` = skip — exactly what `git bisect run` expects. Use `--analyze` to re-index on every commit visited.
+
+---
+
 ## Why it matters
 
 | | cgx | Reading source files |
@@ -84,7 +163,9 @@ After `cgx analyze`, two files land in your repo root: `CGX_SKILL.md` (instructs
 
 | Feature | What it does |
 |---|---|
-| **Tree-sitter AST parsing** | TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP — parsed in parallel |
+| **`cgx docs generate --vault`** | Generate a layered, Obsidian-ready documentation vault from the graph — project overview, per-file TL;DR + role badge, public APIs, hotspots, dep purposes with unused-dep detection, plus AI prose stubs you fill in on your schedule |
+| **`cgx bisect-script`** | Drop into `git bisect run` to bisect on declarative graph predicates (node exists, count bounds, no dead-code, ...). Exits 0/1/125 — git does the binary search |
+| **Tree-sitter AST parsing** | TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP — parsed in parallel, with docstring extraction across **all** five languages |
 | **Git history overlay** | Churn scores, co-change edges, ownership — the temporal graph |
 | **`cgx query blast-radius`** | Direct + transitive callers with risk scoring |
 | **`cgx watch`** | Debounced live re-indexing on every save |
@@ -98,6 +179,9 @@ After `cgx analyze`, two files land in your repo root: `CGX_SKILL.md` (instructs
 
 | Feature | Description |
 |---|---|
+| **Documentation Vault** | `cgx docs generate --vault` writes a layered Obsidian vault with project overview, per-file TL;DR + role classification, public APIs grouped by directory, hotspots/dead code, dependency table with curated purposes and unused-dep flags, and AI prose stubs you fill on demand |
+| **Bisect Script** | `cgx bisect-script` evaluates declarative graph predicates (node exists / missing, count bounds, dead-code) and exits 0/1/125 for `git bisect run` |
+| **Multi-language docstring extraction** | Rust (`///`, `/** */`, including across `#[derive]`), Go (`// SymbolName`), Java/PHP (`/** */`, skipping annotations), Python (triple-quoted body docstring), TypeScript — all extracted at parse time |
 | **AST Parsing** | Tree-sitter parses TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP in parallel |
 | **JSX Caller Tracking** | React component usages (`<MyComp />`) are tracked as call edges |
 | **JSX Comment Extraction** | `{/* TODO */}` expression comments and commented-out JSX code are extracted and tagged separately from code comments |
@@ -211,6 +295,8 @@ Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 <details>
 <summary>Upgrade notes for older versions</summary>
 
+> **On v0.4.x?** Run `cgx update --auto` or reinstall. v0.5.0 adds `cgx docs generate --vault` (Obsidian documentation vault with project overview, per-file TL;DR, role classification, dep purposes + unused-dep detection, AI prose stubs), `cgx bisect-script` (drop into `git bisect run`), docstring extraction for Rust/Go/Java/PHP/Python (was TypeScript-only), and four new `GraphDb` query methods. Re-run `cgx analyze` after upgrading to populate the new `doc_comment` data.
+>
 > **On v0.3.0?** Run `cgx update --auto` or reinstall. v0.3.1 fixes `cgx complexity --combined` (now uses file-level churn), adds `cgx test coverage --by=community`, improves `cgx todos` empty-result messages, shows available built-in rules in `cgx rules list`, and adds a stale-index warning to `cgx complexity`. Also adds previously undocumented commands: `cgx impact`, `cgx init`, `cgx list`, `cgx query deps`, `cgx query community`.
 >
 > **On v0.2.x?** Run `cgx update --auto` or reinstall. v0.3.0 adds `cgx todos`, `cgx docs coverage`, `cgx complexity`, `cgx test coverage/gaps`, `cgx deps health`, `cgx review`, `cgx rules check`, `cgx dupes`, `cgx explain`, and `cgx timeline` — a full suite of advanced code intelligence commands. Re-run `cgx analyze --force` after upgrading to refresh the graph with new columns (complexity, doc_comment, is_tested, test_count).

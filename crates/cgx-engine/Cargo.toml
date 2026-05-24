@@ -1,6 +1,6 @@
 [package]
 name = "cgx-engine"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 description = "Core engine for cgx — Tree-sitter parsing, DuckDB graph storage, git analysis, and clustering"
 readme = "README.md"
@@ -14,7 +14,6 @@ categories = ["development-tools", "parser-implementations"]
 [dependencies]
 tree-sitter = "0.22"
 tree-sitter-typescript = "0.21"
-tree-sitter-javascript = "0.21"
 tree-sitter-python = "0.21"
 tree-sitter-rust = "0.21"
 tree-sitter-go = "0.21"
@@ -35,5 +34,3 @@ tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 toml = "0.8"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
-flate2 = "1.0"
-base64 = "0.22"

@@ -1575,6 +1575,449 @@ impl GraphDb {
             .query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))
             .unwrap_or(0)
     }
+
+    /// All exported symbols under a path prefix or within a community.
+    ///
+    /// Used by the docs generator to build per-community public-API notes. Excludes
+    /// `File` and `Author` kinds — only "real" symbols.
+    pub fn get_public_api(&self, scope: ApiScope) -> anyhow::Result<Vec<PublicSymbol>> {
+        let row_map = |row: &duckdb::Row<'_>| {
+            Ok(PublicSymbol {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                path: row.get(3)?,
+                line_start: row.get(4)?,
+                doc_comment: row.get::<_, Option<String>>(5).unwrap_or(None),
+            })
+        };
+
+        let mut out = Vec::new();
+        match scope {
+            ApiScope::Path(p) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, kind, name, path, line_start, doc_comment
+                     FROM nodes
+                     WHERE exported = 1 AND kind NOT IN ('File', 'Author', 'Module')
+                       AND path LIKE ?
+                     ORDER BY path, line_start",
+                )?;
+                let rows = stmt.query_map(params![format!("{}%", p)], row_map)?;
+                for r in rows {
+                    out.push(r?);
+                }
+            }
+            ApiScope::Community(c) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, kind, name, path, line_start, doc_comment
+                     FROM nodes
+                     WHERE exported = 1 AND kind NOT IN ('File', 'Author', 'Module')
+                       AND community = ?
+                     ORDER BY path, line_start",
+                )?;
+                let rows = stmt.query_map(params![c], row_map)?;
+                for r in rows {
+                    out.push(r?);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Nodes with `in_degree == 0` — i.e., nothing else in the graph calls them.
+    /// Excludes file/author/module nodes and tests; those are not user-facing entry points.
+    /// Returns `EntryPoint` with a human-readable reason. For a quick top-N browser,
+    /// see [`Self::get_entry_points`].
+    pub fn list_entry_points(&self) -> anyhow::Result<Vec<EntryPoint>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling,
+                    community, in_degree, out_degree, COALESCE(exported, false),
+                    COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0),
+                    COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
+             FROM nodes
+             WHERE in_degree = 0
+               AND kind NOT IN ('File', 'Author', 'Module')
+               AND COALESCE(is_test_file, 0) = 0
+             ORDER BY exported DESC, out_degree DESC, path, line_start",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let node = Node {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                path: row.get(3)?,
+                line_start: row.get(4)?,
+                line_end: row.get(5)?,
+                language: row.get(6)?,
+                churn: row.get(7)?,
+                coupling: row.get(8)?,
+                community: row.get(9)?,
+                in_degree: row.get(10)?,
+                out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+            };
+            Ok(node)
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            let node = r?;
+            let reason = if node.exported {
+                "exported, no callers"
+            } else if node.kind == "Function" || node.kind == "Method" {
+                "no callers in graph (CLI entry / event handler / dead candidate)"
+            } else {
+                "no incoming references"
+            }
+            .to_string();
+            out.push(EntryPoint { node, reason });
+        }
+        Ok(out)
+    }
+
+    /// Aggregate edge counts between distinct communities.
+    /// Each row represents the directed bundle of edges crossing a community boundary.
+    pub fn get_cross_cluster_deps(&self) -> anyhow::Result<Vec<CrossClusterEdge>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ns.community AS src_c,
+                    COALESCE(cs.label, '') AS src_label,
+                    nd.community AS dst_c,
+                    COALESCE(cd.label, '') AS dst_label,
+                    COUNT(*) AS edge_count,
+                    SUM(e.weight) AS total_weight
+             FROM edges e
+             JOIN nodes ns ON ns.id = e.src
+             JOIN nodes nd ON nd.id = e.dst
+             LEFT JOIN communities cs ON cs.id = ns.community
+             LEFT JOIN communities cd ON cd.id = nd.community
+             WHERE ns.community != nd.community
+               AND ns.community > 0 AND nd.community > 0
+               AND e.kind IN ('CALLS', 'IMPORTS', 'INHERITS', 'DEPENDS_ON')
+             GROUP BY src_c, src_label, dst_c, dst_label
+             ORDER BY edge_count DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(CrossClusterEdge {
+                src_community: row.get(0)?,
+                src_label: row.get(1)?,
+                dst_community: row.get(2)?,
+                dst_label: row.get(3)?,
+                edge_count: row.get(4)?,
+                total_weight: row.get::<_, f64>(5).unwrap_or(0.0),
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// One-shot context bundle for everything the docs generator needs about a single file.
+    ///
+    /// Replaces 5+ individual queries (symbols, callers, callees, tests, owners, scores)
+    /// with a single call.
+    pub fn get_file_summary(&self, path: &str) -> anyhow::Result<FileSummary> {
+        // 1. All nodes in the file (excluding the File node itself and Authors)
+        let mut symbols: Vec<Node> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, kind, name, path, line_start, line_end, language, churn, coupling,
+                        community, in_degree, out_degree, COALESCE(exported, false),
+                        COALESCE(is_dead_candidate, false), dead_reason, COALESCE(complexity, 0.0),
+                        COALESCE(is_test_file, 0), COALESCE(test_count, 0), COALESCE(is_tested, 0)
+                 FROM nodes
+                 WHERE path = ? AND kind NOT IN ('File', 'Author')
+                 ORDER BY line_start",
+            )?;
+            let rows = stmt.query_map(params![path], |row| {
+                Ok(Node {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    name: row.get(2)?,
+                    path: row.get(3)?,
+                    line_start: row.get(4)?,
+                    line_end: row.get(5)?,
+                    language: row.get(6)?,
+                    churn: row.get(7)?,
+                    coupling: row.get(8)?,
+                    community: row.get(9)?,
+                    in_degree: row.get(10)?,
+                    out_degree: row.get(11)?,
+                    exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                    is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                    dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                    complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                    is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                    test_count: row.get::<_, i64>(17).unwrap_or(0),
+                    is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+                })
+            })?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+
+        // 2. File-level metadata (language, churn, complexity, community)
+        let (file_lang, file_churn, file_coupling, file_community): (String, f64, f64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(language, ''),
+                        COALESCE(churn, 0.0),
+                        COALESCE(coupling, 0.0),
+                        COALESCE(community, 0)
+                 FROM nodes WHERE id = ?",
+                params![format!("file:{}", path)],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap_or_else(|_| {
+                // Fall back to most common values across the file's symbols.
+                let lang = symbols
+                    .iter()
+                    .find(|n| !n.language.is_empty())
+                    .map(|n| n.language.clone())
+                    .unwrap_or_default();
+                let comm = symbols.first().map(|n| n.community).unwrap_or(0);
+                (lang, 0.0, 0.0, comm)
+            });
+
+        // 3. Cross-file callers: edges into any symbol in this file from a node in a different file.
+        let callers: Vec<Node> = self.cross_file_endpoints(path, /*direction_in =*/ true)?;
+
+        // 4. Cross-file callees.
+        let callees: Vec<Node> = self.cross_file_endpoints(path, /*direction_in =*/ false)?;
+
+        // 5. Tests touching this file: test-marked function nodes that CALL into our symbols.
+        let tests: Vec<Node> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language,
+                        n.churn, n.coupling, n.community, n.in_degree, n.out_degree,
+                        COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false),
+                        n.dead_reason, COALESCE(n.complexity, 0.0),
+                        COALESCE(n.is_test_file, 0), COALESCE(n.test_count, 0),
+                        COALESCE(n.is_tested, 0)
+                 FROM nodes n
+                 JOIN edges e ON e.src = n.id
+                 JOIN nodes t ON t.id = e.dst
+                 WHERE t.path = ? AND COALESCE(n.is_test_file, 0) = 1
+                 LIMIT 50",
+            )?;
+            let rows = stmt.query_map(params![path], |row| {
+                Ok(Node {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    name: row.get(2)?,
+                    path: row.get(3)?,
+                    line_start: row.get(4)?,
+                    line_end: row.get(5)?,
+                    language: row.get(6)?,
+                    churn: row.get(7)?,
+                    coupling: row.get(8)?,
+                    community: row.get(9)?,
+                    in_degree: row.get(10)?,
+                    out_degree: row.get(11)?,
+                    exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                    is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                    dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                    complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                    is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                    test_count: row.get::<_, i64>(17).unwrap_or(0),
+                    is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+                })
+            })?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+
+        // 6. Owners: distinct authors that OWNS this file. (weight is approximate — git.rs
+        // currently stores 1.0 per OWNS edge; refined per-author percentages live in
+        // GitAnalysis::file_owners and are not persisted to the graph.)
+        let owners: Vec<(String, f64)> = {
+            let file_id = format!("file:{}", path);
+            let mut stmt = self.conn.prepare(
+                "SELECT a.name, e.weight
+                 FROM edges e
+                 JOIN nodes a ON a.id = e.src
+                 WHERE e.dst = ? AND e.kind = 'OWNS' AND a.kind = 'Author'
+                 ORDER BY e.weight DESC
+                 LIMIT 10",
+            )?;
+            let rows = stmt.query_map(params![file_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1).unwrap_or(1.0),
+                ))
+            })?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+
+        // Aggregate complexity / exported count across symbols in the file.
+        let max_complexity = symbols.iter().map(|n| n.complexity).fold(0.0_f64, f64::max);
+        let exported_count = symbols.iter().filter(|n| n.exported).count();
+
+        // Stable order of symbols by line_start (already done above).
+        symbols.sort_by_key(|n| n.line_start);
+
+        Ok(FileSummary {
+            path: path.to_string(),
+            language: file_lang,
+            community: file_community,
+            symbols,
+            callers,
+            callees,
+            tests,
+            owners,
+            churn: file_churn,
+            coupling: file_coupling,
+            complexity: max_complexity,
+            exported_count,
+        })
+    }
+
+    /// Helper: nodes in *other* files that either call into (`direction_in = true`)
+    /// or are called by (`direction_in = false`) any node in `path`.
+    fn cross_file_endpoints(&self, path: &str, direction_in: bool) -> anyhow::Result<Vec<Node>> {
+        let sql = if direction_in {
+            "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language,
+                    n.churn, n.coupling, n.community, n.in_degree, n.out_degree,
+                    COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false),
+                    n.dead_reason, COALESCE(n.complexity, 0.0),
+                    COALESCE(n.is_test_file, 0), COALESCE(n.test_count, 0),
+                    COALESCE(n.is_tested, 0)
+             FROM nodes n
+             JOIN edges e ON e.src = n.id
+             JOIN nodes t ON t.id = e.dst
+             WHERE t.path = ? AND n.path != ?
+               AND e.kind IN ('CALLS', 'IMPORTS', 'INHERITS')
+               AND n.kind NOT IN ('File', 'Author')
+             LIMIT 50"
+        } else {
+            "SELECT DISTINCT n.id, n.kind, n.name, n.path, n.line_start, n.line_end, n.language,
+                    n.churn, n.coupling, n.community, n.in_degree, n.out_degree,
+                    COALESCE(n.exported, false), COALESCE(n.is_dead_candidate, false),
+                    n.dead_reason, COALESCE(n.complexity, 0.0),
+                    COALESCE(n.is_test_file, 0), COALESCE(n.test_count, 0),
+                    COALESCE(n.is_tested, 0)
+             FROM nodes n
+             JOIN edges e ON e.dst = n.id
+             JOIN nodes s ON s.id = e.src
+             WHERE s.path = ? AND n.path != ?
+               AND e.kind IN ('CALLS', 'IMPORTS', 'INHERITS')
+               AND n.kind NOT IN ('File', 'Author')
+             LIMIT 50"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params![path, path], |row| {
+            Ok(Node {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                path: row.get(3)?,
+                line_start: row.get(4)?,
+                line_end: row.get(5)?,
+                language: row.get(6)?,
+                churn: row.get(7)?,
+                coupling: row.get(8)?,
+                community: row.get(9)?,
+                in_degree: row.get(10)?,
+                out_degree: row.get(11)?,
+                exported: row.get::<_, i64>(12).map(|v| v != 0).unwrap_or(false),
+                is_dead_candidate: row.get::<_, bool>(13).unwrap_or(false),
+                dead_reason: row.get::<_, Option<String>>(14).unwrap_or(None),
+                complexity: row.get::<_, f64>(15).unwrap_or(0.0),
+                is_test_file: row.get::<_, i64>(16).map(|v| v != 0).unwrap_or(false),
+                test_count: row.get::<_, i64>(17).unwrap_or(0),
+                is_tested: row.get::<_, i64>(18).map(|v| v != 0).unwrap_or(false),
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
+
+    /// Read a stored docstring for a node by id, if one was extracted by the parser.
+    pub fn get_doc_comment(&self, node_id: &str) -> anyhow::Result<Option<String>> {
+        let v: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT doc_comment FROM nodes WHERE id = ?",
+                params![node_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .unwrap_or(None);
+        Ok(v)
+    }
+}
+
+/// Scope filter for [`GraphDb::get_public_api`].
+#[derive(Debug, Clone)]
+pub enum ApiScope {
+    Path(String),
+    Community(i64),
+}
+
+/// A single exported symbol, used by the docs generator's Public-API notes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicSymbol {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub path: String,
+    pub line_start: u32,
+    pub doc_comment: Option<String>,
+}
+
+/// A graph-root node — nothing else points to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryPoint {
+    pub node: Node,
+    pub reason: String,
+}
+
+/// Aggregate edge-bundle crossing two distinct communities.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossClusterEdge {
+    pub src_community: i64,
+    pub src_label: String,
+    pub dst_community: i64,
+    pub dst_label: String,
+    pub edge_count: i64,
+    pub total_weight: f64,
+}
+
+/// Everything the docs generator needs about a single file in one bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileSummary {
+    pub path: String,
+    pub language: String,
+    pub community: i64,
+    pub symbols: Vec<Node>,
+    pub callers: Vec<Node>,
+    pub callees: Vec<Node>,
+    pub tests: Vec<Node>,
+    /// `(author_name, edge_weight)`. Weights are approximate (see `get_file_summary`).
+    pub owners: Vec<(String, f64)>,
+    pub churn: f64,
+    pub coupling: f64,
+    pub complexity: f64,
+    pub exported_count: usize,
 }
 
 pub fn repo_hash(path: &Path) -> String {

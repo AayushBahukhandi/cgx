@@ -1,6 +1,6 @@
 use tree_sitter::{Parser, Query, QueryCursor};
 
-use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
+use crate::parser::{meta_set, EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
 use crate::walker::SourceFile;
 
 pub struct PythonParser {
@@ -55,17 +55,21 @@ impl LanguageParser for PythonParser {
                 else {
                     continue;
                 };
-                let name = node_text(name_capture.node, source_bytes);
-                let start = name_capture.node.start_position();
-                let body_end = m
+                let fn_node = m
                     .captures
                     .iter()
                     .find(|c| query.capture_names()[c.index as usize] == "fn")
-                    .map(|c| c.node.end_position())
+                    .map(|c| c.node);
+                let name = node_text(name_capture.node, source_bytes);
+                let start = name_capture.node.start_position();
+                let body_end = fn_node
+                    .map(|n| n.end_position())
                     .unwrap_or_else(|| name_capture.node.end_position());
                 let id = format!("fn:{}:{}", file.relative_path, name);
 
-                nodes.push(NodeDef {
+                let doc_comment = fn_node.and_then(|n| extract_py_docstring(n, source_bytes));
+
+                let mut def = NodeDef {
                     id: id.clone(),
                     kind: NodeKind::Function,
                     name,
@@ -73,7 +77,11 @@ impl LanguageParser for PythonParser {
                     line_start: start.row as u32 + 1,
                     line_end: body_end.row as u32 + 1,
                     ..Default::default()
-                });
+                };
+                if let Some(doc) = doc_comment {
+                    meta_set(&mut def, "doc_comment", serde_json::Value::String(doc));
+                }
+                nodes.push(def);
 
                 edges.push(EdgeDef {
                     src: fp.clone(),
@@ -98,17 +106,21 @@ impl LanguageParser for PythonParser {
                 else {
                     continue;
                 };
-                let name = node_text(name_capture.node, source_bytes);
-                let start = name_capture.node.start_position();
-                let body_end = m
+                let cls_node = m
                     .captures
                     .iter()
                     .find(|c| query.capture_names()[c.index as usize] == "cls")
-                    .map(|c| c.node.end_position())
+                    .map(|c| c.node);
+                let name = node_text(name_capture.node, source_bytes);
+                let start = name_capture.node.start_position();
+                let body_end = cls_node
+                    .map(|n| n.end_position())
                     .unwrap_or_else(|| name_capture.node.end_position());
                 let id = format!("cls:{}:{}", file.relative_path, name);
 
-                nodes.push(NodeDef {
+                let doc_comment = cls_node.and_then(|n| extract_py_docstring(n, source_bytes));
+
+                let mut def = NodeDef {
                     id: id.clone(),
                     kind: NodeKind::Class,
                     name,
@@ -116,7 +128,11 @@ impl LanguageParser for PythonParser {
                     line_start: start.row as u32 + 1,
                     line_end: body_end.row as u32 + 1,
                     ..Default::default()
-                });
+                };
+                if let Some(doc) = doc_comment {
+                    meta_set(&mut def, "doc_comment", serde_json::Value::String(doc));
+                }
+                nodes.push(def);
 
                 edges.push(EdgeDef {
                     src: fp.clone(),
@@ -184,10 +200,11 @@ impl LanguageParser for PythonParser {
             }
         }
 
-        // In Python, top-level functions/classes not starting with _ are considered exported
+        // In Python, top-level functions/classes not starting with _ are considered exported.
+        // Preserve any existing metadata (e.g. doc_comment) by merging rather than overwriting.
         for node_def in &mut nodes {
             if !node_def.name.starts_with('_') {
-                node_def.metadata = serde_json::json!({"exported": true});
+                meta_set(node_def, "exported", serde_json::Value::Bool(true));
             }
         }
 
@@ -201,6 +218,51 @@ impl LanguageParser for PythonParser {
 
 fn node_text(node: tree_sitter::Node, source: &[u8]) -> String {
     node.utf8_text(source).unwrap_or("").to_string()
+}
+
+/// Python docstring = the first `string` statement inside the function/class body block.
+fn extract_py_docstring(def_node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let body = def_node.child_by_field_name("body")?;
+    let mut cursor = body.walk();
+    if !cursor.goto_first_child() {
+        return None;
+    }
+    loop {
+        let stmt = cursor.node();
+        // Tree-sitter-python wraps the docstring as: block > expression_statement > string
+        if stmt.kind() == "expression_statement" {
+            let mut inner = stmt.walk();
+            if inner.goto_first_child() && inner.node().kind() == "string" {
+                let raw = inner.node().utf8_text(source).unwrap_or("").trim();
+                return Some(strip_py_string_quotes(raw));
+            }
+        }
+        // Stop at first non-string statement — docstring must be the very first thing.
+        if stmt.kind() != "comment" {
+            return None;
+        }
+        if !cursor.goto_next_sibling() {
+            return None;
+        }
+    }
+}
+
+fn strip_py_string_quotes(raw: &str) -> String {
+    let s = raw.trim();
+    // Strip optional u/b/r/f prefix
+    let s = s.trim_start_matches(['u', 'b', 'r', 'f', 'U', 'B', 'R', 'F']);
+    let inner = if let Some(rest) = s.strip_prefix("\"\"\"") {
+        rest.strip_suffix("\"\"\"").unwrap_or(rest)
+    } else if let Some(rest) = s.strip_prefix("'''") {
+        rest.strip_suffix("'''").unwrap_or(rest)
+    } else if let Some(rest) = s.strip_prefix('"') {
+        rest.strip_suffix('"').unwrap_or(rest)
+    } else if let Some(rest) = s.strip_prefix('\'') {
+        rest.strip_suffix('\'').unwrap_or(rest)
+    } else {
+        s
+    };
+    inner.trim().to_string()
 }
 
 fn resolve_py_import(current_file: &str, module_name: &str) -> String {

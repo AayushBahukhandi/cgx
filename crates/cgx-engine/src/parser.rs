@@ -271,3 +271,83 @@ impl Default for ParserRegistry {
         Self::new()
     }
 }
+
+/// Walk back through `item`'s preceding siblings, collecting consecutive comments
+/// that pass `is_doc`. Attributes/annotations directly above the item (e.g. Rust
+/// `#[derive]`, Java `@Override`, PHP `#[Attr]`) are skipped so the comment search
+/// can reach the actual doc block above them.
+///
+/// Returns the joined doc block in source order, or `None` if no doc comments
+/// were found.
+pub fn collect_doc_block_above(
+    item: tree_sitter::Node,
+    source: &[u8],
+    is_doc: fn(&str) -> bool,
+) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = item.prev_sibling();
+    let mut seen_comment = false;
+    while let Some(prev) = cur {
+        let kind = prev.kind();
+        let is_comment = kind == "comment"
+            || kind == "line_comment"
+            || kind == "block_comment"
+            || kind == "doc_comment";
+        let is_attribute = !seen_comment
+            && matches!(
+                kind,
+                "attribute_item"
+                    | "inner_attribute_item"
+                    | "attribute"
+                    | "annotation"
+                    | "marker_annotation"
+                    | "modifiers"
+            );
+
+        if is_comment {
+            let text = prev.utf8_text(source).unwrap_or("").trim().to_string();
+            if !is_doc(&text) {
+                break;
+            }
+            lines.push(text);
+            seen_comment = true;
+            cur = prev.prev_sibling();
+        } else if is_attribute {
+            // Skip attributes that sit between the item and its doc block.
+            cur = prev.prev_sibling();
+        } else {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        lines.reverse();
+        Some(lines.join("\n"))
+    }
+}
+
+/// Walk up `node`'s parents until one of `kinds` is found.
+pub fn enclosing_node<'a>(
+    node: tree_sitter::Node<'a>,
+    kinds: &[&str],
+) -> Option<tree_sitter::Node<'a>> {
+    let mut cur = Some(node);
+    while let Some(n) = cur {
+        if kinds.contains(&n.kind()) {
+            return Some(n);
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// Set `key` on `node.metadata` (treating it as a JSON object, replacing `Null` with `{}`).
+pub fn meta_set(node: &mut NodeDef, key: &str, value: serde_json::Value) {
+    if !node.metadata.is_object() {
+        node.metadata = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let Some(obj) = node.metadata.as_object_mut() {
+        obj.insert(key.to_string(), value);
+    }
+}

@@ -1,8 +1,10 @@
+pub mod bisect;
 pub mod cluster;
 pub mod config;
 pub mod deadcode;
 pub mod deps;
 pub mod diff;
+pub mod docs;
 pub mod dupes;
 pub mod export;
 pub mod git;
@@ -18,8 +20,8 @@ pub mod walker;
 
 pub use cluster::{detect_communities, run_clustering};
 pub use config::{
-    AnalyzeConfig, CgxConfig, ChatConfig, ExportConfig, IndexConfig, McpConfig, ProjectConfig,
-    ServeConfig, SkillConfig, WatchConfig,
+    AnalyzeConfig, CgxConfig, ChatConfig, DocsConfig, ExportConfig, IndexConfig, McpConfig,
+    ProjectConfig, ServeConfig, SkillConfig, WatchConfig,
 };
 pub use deadcode::{
     detect_dead_code, mark_dead_candidates, Confidence, DeadCodeReport, DeadNode, DeadReason,
@@ -32,7 +34,8 @@ pub use dupes::{detect_clones, CloneKind, ClonePair};
 pub use export::{export_dot, export_graphml, export_json, export_mermaid, export_svg};
 pub use git::{analyze_repo, GitAnalysis};
 pub use graph::{
-    CloneRow, CommunityRow, DocsCoverage, Edge, GraphDb, Node, RepoStats, SnapshotEntry, TagRow,
+    ApiScope, CloneRow, CommunityRow, CrossClusterEdge, DocsCoverage, Edge, EntryPoint,
+    FileSummary, GraphDb, Node, PublicSymbol, RepoStats, SnapshotEntry, TagRow,
     TestCoverageSummary,
 };
 pub use parser::{

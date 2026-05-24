@@ -4,5 +4,7 @@ node_modules/
 .DS_Store
 *.db
 ~/.cgx/
+.cgx/
 .claude/
 .gstack/
+cgx-docs/

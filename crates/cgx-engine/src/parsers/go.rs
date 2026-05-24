@@ -1,6 +1,9 @@
 use tree_sitter::{Node, Parser, Query, QueryCursor};
 
-use crate::parser::{EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind, ParseResult};
+use crate::parser::{
+    collect_doc_block_above, meta_set, EdgeDef, EdgeKind, LanguageParser, NodeDef, NodeKind,
+    ParseResult,
+};
 use crate::walker::SourceFile;
 
 pub struct GoParser {
@@ -138,19 +141,31 @@ fn extract_nodes(
         let name = node_text(name_capture.node, source_bytes);
         let node_start = name_capture.node.start_position();
 
-        let body_end = m
+        let item_node = m
             .captures
             .iter()
             .find(|c| {
                 let cap_name = &query.capture_names()[c.index as usize];
                 *cap_name == "fn" || *cap_name == "cls"
             })
-            .map(|c| c.node.end_position())
+            .map(|c| c.node);
+        let body_end = item_node
+            .map(|n| n.end_position())
             .unwrap_or_else(|| name_capture.node.end_position());
 
         let id = format!("{}:{}:{}", prefix, file.relative_path, name);
 
-        nodes.push(NodeDef {
+        // Go: exported = first letter uppercase. Doc comments are `// ...` lines above.
+        let exported = name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false);
+        let doc_comment = item_node
+            .and_then(|n| collect_doc_block_above(n, source_bytes, is_go_doc_comment))
+            .map(strip_go_doc_markers);
+
+        let mut def = NodeDef {
             id: id.clone(),
             kind: kind.clone(),
             name: name.clone(),
@@ -158,7 +173,14 @@ fn extract_nodes(
             line_start: node_start.row as u32 + 1,
             line_end: body_end.row as u32 + 1,
             ..Default::default()
-        });
+        };
+        if exported {
+            meta_set(&mut def, "exported", serde_json::Value::Bool(true));
+        }
+        if let Some(doc) = doc_comment {
+            meta_set(&mut def, "doc_comment", serde_json::Value::String(doc));
+        }
+        nodes.push(def);
 
         edges.push(EdgeDef {
             src: file_id.to_string(),
@@ -167,6 +189,35 @@ fn extract_nodes(
             ..Default::default()
         });
     }
+}
+
+/// Go conventionally documents with `// SymbolName ...` lines directly above the decl.
+fn is_go_doc_comment(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("//") || t.starts_with("/*")
+}
+
+fn strip_go_doc_markers(raw: String) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let l = line.trim();
+        let stripped = if let Some(rest) = l.strip_prefix("//") {
+            rest.trim().to_string()
+        } else if l.starts_with("/*") {
+            l.trim_start_matches("/*")
+                .trim_end_matches("*/")
+                .trim()
+                .to_string()
+        } else if l.starts_with("*/") {
+            String::new()
+        } else if let Some(rest) = l.strip_prefix('*') {
+            rest.trim().to_string()
+        } else {
+            l.to_string()
+        };
+        out.push(stripped);
+    }
+    out.join("\n").trim().to_string()
 }
 
 fn node_text(node: tree_sitter::Node, source: &[u8]) -> String {
