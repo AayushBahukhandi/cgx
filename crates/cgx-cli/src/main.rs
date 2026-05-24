@@ -6759,7 +6759,27 @@ fn cmd_bisect_script(
     let db = GraphDb::open(&canonical)?;
     let mut report = predicates.evaluate(&db)?;
 
+    // Empty predicate file → can't make a determination, skip the commit.
+    if report.outcomes.is_empty() {
+        eprintln!(
+            "cgx bisect-script: predicate file is empty — every commit would pass vacuously. \
+             Add at least one predicate (see `cgx bisect-script --example`). Skipping."
+        );
+        std::process::exit(125);
+    }
+
     // If the user supplied --rule-violations N, override the placeholder predicate.
+    // If `rule_violations_max` is set but `--rule-violations` was NOT supplied, skip —
+    // we can't honour the gate without the count, and silently passing it would
+    // be the wrong default.
+    if predicates.rule_violations_max.is_some() && rule_violations.is_none() {
+        eprintln!(
+            "cgx bisect-script: rule_violations_max set in config but --rule-violations N not \
+             supplied. Pass it (e.g. `cgx bisect-script --rule-violations $(cgx rules check \
+             --count)`) so the gate can be evaluated. Skipping."
+        );
+        std::process::exit(125);
+    }
     if let Some(actual) = rule_violations {
         if let Some(max) = predicates.rule_violations_max {
             let passed = actual <= max;
