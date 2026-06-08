@@ -775,6 +775,37 @@ const ANNOTATION_TAGS: &[&str] = &[
     "TODO", "FIXME", "HACK", "NOTE", "BUG", "OPTIMIZE", "WARN", "XXX",
 ];
 
+/// Scan one line for an annotation tag, requiring the tag to appear as an
+/// uppercase token with non-word-character boundaries (start-of-line, `//`,
+/// `/*`, ` `, `*`, etc. before; `:`, `(`, `!`, whitespace, etc. after).
+///
+/// This deliberately rejects prose like `Note:` (wrong case) and `bugs`
+/// (word character after `BUG`) so JSDoc blocks aren't flagged as TODOs.
+fn match_annotation_tag(line: &str) -> Option<&'static str> {
+    let bytes = line.as_bytes();
+    for &tag in ANNOTATION_TAGS {
+        let t = tag.as_bytes();
+        if bytes.len() < t.len() {
+            continue;
+        }
+        let mut i = 0;
+        while i + t.len() <= bytes.len() {
+            if &bytes[i..i + t.len()] == t {
+                let before_ok =
+                    i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+                let after = i + t.len();
+                let after_ok = after == bytes.len()
+                    || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+                if before_ok && after_ok {
+                    return Some(tag);
+                }
+            }
+            i += 1;
+        }
+    }
+    None
+}
+
 /// Recursively walk the AST extracting annotation comments (TODO/FIXME/etc.).
 /// `in_jsx_expression` tracks whether we are inside a `jsx_expression` node,
 /// which is how `{/* ... */}` comments appear in the TSX grammar.
@@ -790,11 +821,15 @@ fn extract_jsx_comments(
     let now_in_jsx = in_jsx_expression || kind == "jsx_expression";
 
     if kind == "comment" {
-        let raw = node.utf8_text(source).unwrap_or("").trim();
+        let raw = node.utf8_text(source).unwrap_or("");
 
         let comment_kind = if in_jsx_expression {
             // Strip `/*` / `*/` delimiters and check for commented-out JSX code
-            let inner = raw.trim_start_matches("/*").trim_end_matches("*/").trim();
+            let inner = raw
+                .trim()
+                .trim_start_matches("/*")
+                .trim_end_matches("*/")
+                .trim();
             if inner.starts_with('<') || inner.contains("</") || inner.contains("/>") {
                 CommentKind::JsxCommentedCode
             } else {
@@ -804,13 +839,13 @@ fn extract_jsx_comments(
             CommentKind::Standard
         };
 
-        let upper = raw.to_uppercase();
-        for &tag in ANNOTATION_TAGS {
-            if upper.contains(tag) {
+        let comment_row = node.start_position().row as u32;
+        for (line_idx, line) in raw.lines().enumerate() {
+            if let Some(tag) = match_annotation_tag(line) {
                 tags.push(CommentTag {
                     tag_type: tag.to_string(),
-                    text: raw.to_string(),
-                    line: node.start_position().row as u32 + 1,
+                    text: line.trim().to_string(),
+                    line: comment_row + line_idx as u32 + 1,
                     comment_kind: comment_kind.clone(),
                 });
                 break;
@@ -826,5 +861,70 @@ fn extract_jsx_comments(
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_annotation_rejects_prose() {
+        // Lowercase prose inside JSDoc — must NOT match.
+        assert_eq!(match_annotation_tag("Note: this is fine"), None);
+        assert_eq!(match_annotation_tag("**Warning:** be careful"), None);
+        assert_eq!(
+            match_annotation_tag("programming bugs are not retried"),
+            None
+        );
+        // Word-boundary check: BUG inside BUGS / DEBUGGER must not match.
+        assert_eq!(match_annotation_tag(" BUGS in this code"), None);
+        assert_eq!(match_annotation_tag("DEBUGGER attached"), None);
+    }
+
+    #[test]
+    fn match_annotation_accepts_canonical_forms() {
+        assert_eq!(match_annotation_tag("// TODO: fix"), Some("TODO"));
+        assert_eq!(match_annotation_tag("  // FIXME"), Some("FIXME"));
+        assert_eq!(match_annotation_tag("// TODO(alice):"), Some("TODO"));
+        assert_eq!(match_annotation_tag("* HACK: workaround"), Some("HACK"));
+        assert_eq!(match_annotation_tag("// XXX"), Some("XXX"));
+        assert_eq!(match_annotation_tag("BUG!"), Some("BUG"));
+    }
+
+    #[test]
+    fn extract_jsx_comments_no_false_positives_on_jsdoc() {
+        let source = r#"
+/**
+ * Base class.
+ *
+ * Note: SchemaValidationError is not a Ky error.
+ *
+ * Programming bugs are not retried.
+ */
+class Foo {
+    // TODO: real annotation
+    bar() {}
+}
+"#;
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::language_typescript())
+            .expect("load ts grammar");
+        let tree = parser.parse(source, None).expect("parse");
+        let mut tags = Vec::new();
+        extract_jsx_comments(&mut tags, tree.root_node(), source.as_bytes(), false);
+        assert_eq!(
+            tags.len(),
+            1,
+            "expected only the real `// TODO: real annotation`, got: {:?}",
+            tags
+        );
+        assert_eq!(tags[0].tag_type, "TODO");
+        assert!(
+            tags[0].text.contains("real annotation"),
+            "text should be the matching line, not /**, got: {:?}",
+            tags[0].text
+        );
     }
 }

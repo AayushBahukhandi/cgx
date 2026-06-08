@@ -21,7 +21,9 @@
 
 ---
 
-> 🚀 **v0.5.1** — bisect-friendly git hooks: the cgx-managed `post-checkout` / `post-commit` hooks now skip during `git bisect`, `git rebase`, and `git merge`, so `cgx bisect-script` works inside `git bisect run` without dirtying `AGENTS.md` / `CGX_SKILL.md`. Bisect-script also now exits `125` (skip) on empty predicate files and when `rule_violations_max` is set without `--rule-violations N`, instead of silently passing. [v0.5.1 →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.1)
+> 🚀 **v0.5.2** — `cgx todos` no longer flags JSDoc prose (`Note:`, `**Warning:**`, the word "bugs") as annotations: matching is now case-sensitive with word boundaries, and the displayed text shows the actual matching line instead of the `/**` block opener. `cgx todos` on an indexed repo with no annotations now says "No annotation comments found." instead of suggesting `cgx analyze`. The terminal graph layout falls back to a deterministic grid when the force-directed simulation diverges, fixing a rare NaN/Inf crash in the TUI. README clarifications: vault layout diagram, `node_count_max` predicate. [v0.5.2 →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.2)
+>
+> **v0.5.1** — bisect-friendly git hooks: the cgx-managed `post-checkout` / `post-commit` hooks now skip during `git bisect`, `git rebase`, and `git merge`, so `cgx bisect-script` works inside `git bisect run` without dirtying `AGENTS.md` / `CGX_SKILL.md`. Bisect-script also now exits `125` (skip) on empty predicate files and when `rule_violations_max` is set without `--rule-violations N`, instead of silently passing. [v0.5.1 →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.1)
 >
 > **v0.5.0** — `cgx docs generate --vault` turns your indexed repo into an Obsidian-ready documentation vault (project overview, dep purposes, unused-dep detection, per-file TL;DR, role classification) · docstring extraction now covers Rust, Go, Java, PHP, Python (was TypeScript-only) · `cgx bisect-script` plugs into `git bisect run` to find commits that break declarative graph predicates · new `GraphDb` queries: `get_file_summary`, `get_public_api`, `list_entry_points`, `get_cross_cluster_deps`. [Release notes →](https://github.com/AayushBahukhandi/cgx/releases/tag/v0.5.0)
 >
@@ -88,21 +90,24 @@ The vault has a layered structure built straight from your graph:
 
 ```text
 cgx-docs/
-├── README.md                       ← project description + dep summary + nav
+├── .obsidian/                          ← Obsidian workspace settings (auto-created)
+├── README.md                           ← project description + dep summary + nav
 ├── 00-Overview/
-│   ├── Architecture.md             ← stack, languages, dep purposes + unused-dep detection,
-│   │                                 files-by-role, largest groups, entry points
-│   ├── HowToNavigate.md            ← reading path for new contributors
-│   └── Glossary.md                 ← node kinds + communities
-├── 10-PublicAPI/<group>.md         ← exported symbols per source directory
+│   ├── Architecture.md                 ← stack, languages, dep purposes + unused-dep detection,
+│   │                                     files-by-role, largest groups, entry points
+│   ├── HowToNavigate.md                ← reading path for new contributors
+│   └── Glossary.md                     ← node kinds + communities
+├── 10-PublicAPI/<group-slug>.md        ← exported symbols per source directory
+│                                         (e.g. source-core.md, test-helpers.md)
 ├── 20-Architecture/
-│   ├── Groups.md                   ← primary navigation: by source directory
-│   ├── Communities.md              ← raw Louvain clusters
+│   ├── Groups.md                       ← primary navigation: by source directory
+│   ├── Communities.md                  ← raw Louvain clusters
 │   ├── CrossClusterDeps.md
 │   └── EntryPoints.md
-├── 30-Modules/<group>/<file>.md    ← per-file: TL;DR + role badge + structure table with
-│                                     inline docstring descriptions + callers/callees +
-│                                     tests + ownership + `<!-- cgx-prompt -->` AI stub
+├── 30-Modules/<role>/<file>.md         ← per-file: TL;DR + role badge + structure table
+│                                         with inline docstring descriptions + callers/
+│                                         callees + tests + ownership + `<!-- cgx-prompt -->`
+│                                         AI stub. <role> is `source` or `test`.
 ├── 40-Risk/
 │   ├── Hotspots.md
 │   ├── ComplexityHigh.md
@@ -137,7 +142,8 @@ frontmatter = true
 cgx bisect-script --example > .cgx/bisect.toml
 
 # 2. Edit .cgx/bisect.toml — anything you can express against the graph:
-#    node_count_min, nodes_exist, nodes_missing, nodes_alive, rule_violations_max
+#    node_count_min, node_count_max, nodes_exist, nodes_missing, nodes_alive,
+#    rule_violations_max
 
 # 3. Bisect
 git bisect start
@@ -167,7 +173,7 @@ Exit codes: `0` = good, `1` = bad, `125` = skip — exactly what `git bisect run
 |---|---|
 | **`cgx docs generate --vault`** | Generate a layered, Obsidian-ready documentation vault from the graph — project overview, per-file TL;DR + role badge, public APIs, hotspots, dep purposes with unused-dep detection, plus AI prose stubs you fill in on your schedule |
 | **`cgx bisect-script`** | Drop into `git bisect run` to bisect on declarative graph predicates (node exists, count bounds, no dead-code, ...). Exits 0/1/125 — git does the binary search |
-| **Tree-sitter AST parsing** | TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP — parsed in parallel, with docstring extraction across **all** five languages |
+| **Tree-sitter AST parsing** | TS/TSX, JS/JSX, Python, Rust, Go, Java, PHP — parsed in parallel, with docstring extraction across all six languages (TypeScript, Rust, Go, Java, PHP, Python) |
 | **Git history overlay** | Churn scores, co-change edges, ownership — the temporal graph |
 | **`cgx query blast-radius`** | Direct + transitive callers with risk scoring |
 | **`cgx watch`** | Debounced live re-indexing on every save |
@@ -297,6 +303,8 @@ Set `CGX_NO_UPDATE_CHECK=1` to disable the background check.
 <details>
 <summary>Upgrade notes for older versions</summary>
 
+> **On v0.5.1?** Run `cgx update --auto` or reinstall. v0.5.2 is a polish release: `cgx todos` no longer reports JSDoc prose (`Note:`, `**Warning:**`, the word "bugs") as annotation tags, and the displayed text is now the matching line rather than the `/**` opener — re-run `cgx analyze --force` to re-extract tags. The TUI also gets a deterministic grid fallback when the force-directed sim diverges, preventing a rare NaN/Inf crash. No schema changes.
+>
 > **On v0.5.0?** Run `cgx update --auto` or reinstall. v0.5.1 fixes the cgx-managed git hooks so they no-op during `git bisect` / `rebase` / `merge` (previously `git bisect run cgx bisect-script` would dirty `AGENTS.md` and `CGX_SKILL.md` at every step and break the next checkout). `cgx bisect-script` also now exits `125` (skip) instead of silently passing when the predicate file is empty or when `rule_violations_max` is set without `--rule-violations N`. **Re-run `cgx analyze` once after upgrading** so the new hook template is installed.
 >
 > **On v0.4.x?** Run `cgx update --auto` or reinstall. v0.5.0 adds `cgx docs generate --vault` (Obsidian documentation vault with project overview, per-file TL;DR, role classification, dep purposes + unused-dep detection, AI prose stubs), `cgx bisect-script` (drop into `git bisect run`), docstring extraction for Rust/Go/Java/PHP/Python (was TypeScript-only), and four new `GraphDb` query methods. Re-run `cgx analyze` after upgrading to populate the new `doc_comment` data.

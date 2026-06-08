@@ -5005,8 +5005,10 @@ fn cmd_todos(
         if tag_filter.is_some() || kind_filter.is_some() {
             let what = tag_filter.or(kind_filter).unwrap_or("annotation");
             println!("  No {} annotation comments found.", what);
-        } else {
+        } else if db.node_count().unwrap_or(0) == 0 {
             println!("  No annotation comments found. Run `cgx analyze` to index the codebase.");
+        } else {
+            println!("  No annotation comments found.");
         }
         return Ok(());
     }

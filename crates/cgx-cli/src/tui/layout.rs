@@ -78,8 +78,21 @@ impl GraphSim {
 }
 
 /// Normalize positions to fill [padding, area-dim - padding] in each axis.
+///
+/// The force-directed simulator occasionally diverges from unlucky random
+/// initial positions and emits NaN/Inf coordinates. When that happens we fall
+/// back to a deterministic grid layout so the TUI still renders something
+/// usable rather than collapsing to a single point or crashing downstream.
 pub fn normalize(positions: &mut HashMap<String, (f64, f64)>, area_w: f64, area_h: f64) {
     if positions.is_empty() {
+        return;
+    }
+
+    let any_non_finite = positions
+        .values()
+        .any(|p| !p.0.is_finite() || !p.1.is_finite());
+    if any_non_finite {
+        grid_fallback(positions, area_w, area_h);
         return;
     }
 
@@ -107,6 +120,39 @@ pub fn normalize(positions: &mut HashMap<String, (f64, f64)>, area_w: f64, area_
     for pos in positions.values_mut() {
         pos.0 = (pos.0 - min_x) / range_x * area_w * (1.0 - 2.0 * padding) + area_w * padding;
         pos.1 = (pos.1 - min_y) / range_y * area_h * (1.0 - 2.0 * padding) + area_h * padding;
+    }
+}
+
+fn grid_fallback(positions: &mut HashMap<String, (f64, f64)>, area_w: f64, area_h: f64) {
+    let n = positions.len();
+    if n == 0 {
+        return;
+    }
+    let cols = (n as f64).sqrt().ceil() as usize;
+    let rows = n.div_ceil(cols);
+    let padding = 0.08;
+    let inner_w = area_w * (1.0 - 2.0 * padding);
+    let inner_h = area_h * (1.0 - 2.0 * padding);
+    let step_x = if cols > 1 {
+        inner_w / (cols as f64 - 1.0)
+    } else {
+        0.0
+    };
+    let step_y = if rows > 1 {
+        inner_h / (rows as f64 - 1.0)
+    } else {
+        0.0
+    };
+    let x0 = area_w * padding;
+    let y0 = area_h * padding;
+
+    // Sort keys for deterministic placement (HashMap iteration order is random).
+    let mut keys: Vec<String> = positions.keys().cloned().collect();
+    keys.sort();
+    for (i, key) in keys.into_iter().enumerate() {
+        let col = i % cols;
+        let row = i / cols;
+        positions.insert(key, (x0 + col as f64 * step_x, y0 + row as f64 * step_y));
     }
 }
 
@@ -263,5 +309,29 @@ mod tests {
             "y range should be > 40 after steps, got {}",
             max_y - min_y
         );
+    }
+
+    #[test]
+    fn normalize_falls_back_to_grid_on_non_finite_input() {
+        // Simulate the divergence case: some positions are inf/NaN.
+        let mut positions: HashMap<String, (f64, f64)> = HashMap::new();
+        positions.insert("a".to_string(), (f64::INFINITY, 0.0));
+        positions.insert("b".to_string(), (0.0, f64::NAN));
+        positions.insert("c".to_string(), (10.0, 20.0));
+        positions.insert("d".to_string(), (-5.0, 30.0));
+
+        normalize(&mut positions, 200.0, 160.0);
+
+        for (k, (x, y)) in &positions {
+            assert!(
+                x.is_finite() && y.is_finite(),
+                "position for {} should be finite after normalize, got ({}, {})",
+                k,
+                x,
+                y
+            );
+            assert!(*x >= 0.0 && *x <= 200.0, "x out of area for {}: {}", k, x);
+            assert!(*y >= 0.0 && *y <= 160.0, "y out of area for {}: {}", k, y);
+        }
     }
 }
