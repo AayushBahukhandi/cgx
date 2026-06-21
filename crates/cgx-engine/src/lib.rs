@@ -304,38 +304,49 @@ pub fn analyze_repo_incremental(
             let _ = db.upsert_node_scores(&format!("file:{}", path), normalized, 0.0);
         }
 
+        // `file_owners` is keyed by file path; each value is that file's top
+        // contributors `(author_name, email, ownership_fraction)`. Invert it
+        // into one Author node per distinct contributor with an OWNS edge to
+        // every file they own — otherwise we'd mint one bogus "author" per file
+        // (named after the path) and point OWNS edges at author names. Authors
+        // are keyed by email (matching the incremental path in cgx-cli) so name
+        // variations for one identity don't fan out into separate nodes.
         let mut author_nodes = Vec::new();
         let mut own_edges = Vec::new();
-        for (author, files) in &git_analysis.file_owners {
-            let author_id = format!("author:{}", author);
-            author_nodes.push(crate::graph::Node {
-                id: author_id.clone(),
-                kind: "Author".to_string(),
-                name: author.clone(),
-                path: String::new(),
-                line_start: 0,
-                line_end: 0,
-                language: String::new(),
-                churn: 0.0,
-                coupling: 0.0,
-                community: 0,
-                in_degree: 0,
-                out_degree: 0,
-                exported: false,
-                is_dead_candidate: false,
-                dead_reason: None,
-                complexity: 0.0,
-                is_test_file: false,
-                test_count: 0,
-                is_tested: false,
-            });
-            for (file_path, _email, _percent) in files.iter().take(5) {
+        let mut seen_authors: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (file_path, owners) in &git_analysis.file_owners {
+            let file_node_id = format!("file:{}", file_path);
+            for (name, email, fraction) in owners {
+                let author_id = format!("author:{}", email);
+                if seen_authors.insert(email.clone()) {
+                    author_nodes.push(crate::graph::Node {
+                        id: author_id.clone(),
+                        kind: "Author".to_string(),
+                        name: name.clone(),
+                        path: String::new(),
+                        line_start: 0,
+                        line_end: 0,
+                        language: String::new(),
+                        churn: 0.0,
+                        coupling: 0.0,
+                        community: 0,
+                        in_degree: 0,
+                        out_degree: 0,
+                        exported: false,
+                        is_dead_candidate: false,
+                        dead_reason: None,
+                        complexity: 0.0,
+                        is_test_file: false,
+                        test_count: 0,
+                        is_tested: false,
+                    });
+                }
                 own_edges.push(crate::graph::Edge {
-                    id: format!("owns:{}:{}", author_id, file_path),
-                    src: author_id.clone(),
-                    dst: format!("file:{}", file_path),
+                    id: format!("owns:{}:{}", author_id, file_node_id),
+                    src: author_id,
+                    dst: file_node_id.clone(),
                     kind: "OWNS".to_string(),
-                    weight: 1.0,
+                    weight: *fraction,
                     confidence: 1.0,
                 });
             }

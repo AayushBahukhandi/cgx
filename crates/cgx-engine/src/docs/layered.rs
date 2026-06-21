@@ -41,7 +41,7 @@ use super::label::build_community_labels;
 use super::project::{detect as detect_project, DepKind, Dependency, ProjectInfo};
 use super::prompt_packet;
 use super::role::{classify as classify_role, FileRole};
-use super::wiki_link::{community_slug, file_group, format_link, public_api_target, safe_filename};
+use super::wiki_link::{file_group, format_link, public_api_target, safe_filename};
 use super::{DocsMode, DocsOptions, DocsReport, WikiLinkStyle};
 
 pub fn write_vault(
@@ -268,27 +268,48 @@ fn render_module_note(
     if summary.symbols.is_empty() {
         out.push_str("_(no symbols extracted for this file)_\n\n");
     } else {
-        out.push_str("| Kind | Name | Lines | Exported | Description |\n");
-        out.push_str("|------|------|-------|----------|-------------|\n");
         let doc_map: HashMap<&str, &str> = existing_docs
             .iter()
             .map(|(n, d)| (n.as_str(), d.as_str()))
             .collect();
+        // The Description column is only worth its width when at least one
+        // symbol actually carries a docstring; otherwise it's an empty column.
+        let has_descriptions = summary
+            .symbols
+            .iter()
+            .any(|n| doc_map.contains_key(n.name.as_str()));
+
+        if has_descriptions {
+            out.push_str("| Kind | Name | Lines | Exported | Description |\n");
+            out.push_str("|------|------|-------|----------|-------------|\n");
+        } else {
+            out.push_str("| Kind | Name | Lines | Exported |\n");
+            out.push_str("|------|------|-------|----------|\n");
+        }
         for n in &summary.symbols {
-            let desc = doc_map
-                .get(n.name.as_str())
-                .map(|d| first_line(d))
-                .unwrap_or_default();
-            let _ = writeln!(
-                out,
-                "| {} | `{}` | {}–{} | {} | {} |",
-                n.kind,
-                n.name,
-                n.line_start,
-                n.line_end,
-                if n.exported { "✓" } else { "" },
-                escape_table_cell(&desc),
-            );
+            let exported = if n.exported { "✓" } else { "" };
+            if has_descriptions {
+                let desc = doc_map
+                    .get(n.name.as_str())
+                    .map(|d| first_line(d))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    out,
+                    "| {} | `{}` | {}–{} | {} | {} |",
+                    n.kind,
+                    n.name,
+                    n.line_start,
+                    n.line_end,
+                    exported,
+                    escape_table_cell(&desc),
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "| {} | `{}` | {}–{} | {} |",
+                    n.kind, n.name, n.line_start, n.line_end, exported,
+                );
+            }
         }
         out.push('\n');
     }
@@ -741,6 +762,20 @@ fn write_how_to_navigate(
     Ok(1)
 }
 
+/// `"42 nodes"`, `"1 node"`, `"3 communities"`. Handles the `-y → -ies`
+/// case (community → communities); everything else just gets a trailing `s`.
+fn pluralize(count: usize, noun: &str) -> String {
+    if count == 1 {
+        return format!("1 {}", noun);
+    }
+    let plural = if let Some(stem) = noun.strip_suffix('y') {
+        format!("{}ies", stem)
+    } else {
+        format!("{}s", noun)
+    };
+    format!("{} {}", count, plural)
+}
+
 fn write_glossary(
     output_dir: &Path,
     all_nodes: &[Node],
@@ -760,8 +795,14 @@ fn write_glossary(
         "File", "Function", "Class", "Variable", "Type", "Module", "Author",
     ] {
         let count = all_nodes.iter().filter(|n| n.kind == kind).count();
-        let _ = writeln!(out, "- **{}** — {} node(s)", kind, count);
+        // Skip kinds this language/repo never produces — an empty "Type — 0"
+        // row is pure noise.
+        if count == 0 {
+            continue;
+        }
+        let _ = writeln!(out, "- **{}** — {}", kind, pluralize(count, "node"));
     }
+
     out.push_str("\n## Communities (Louvain clusters)\n\n");
     let mut sizes: HashMap<i64, usize> = HashMap::new();
     for n in all_nodes {
@@ -769,12 +810,33 @@ fn write_glossary(
     }
     let mut ordered: Vec<(&i64, &usize)> = sizes.iter().collect();
     ordered.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
-    for (id, count) in ordered {
+
+    // Louvain leaves a long tail of singleton communities (one isolated node
+    // each). Listing all of them buries the few that matter, so we show the
+    // multi-node communities and collapse the singletons into one summary line.
+    let total = ordered.len();
+    let singletons = ordered.iter().filter(|(_, c)| **c <= 1).count();
+    let shown: Vec<_> = ordered.iter().filter(|(_, c)| **c > 1).collect();
+
+    let _ = writeln!(
+        out,
+        "{} total. Showing the {} with 2+ nodes; {} omitted.\n",
+        pluralize(total, "community"),
+        shown.len(),
+        pluralize(singletons, "singleton")
+    );
+    for (id, count) in shown {
         let label = community_labels
             .get(id)
             .cloned()
             .unwrap_or_else(|| format!("community-{}", id));
-        let _ = writeln!(out, "- **{}** (id={}, {} nodes)", label, id, count);
+        let _ = writeln!(
+            out,
+            "- **{}** (id={}) — {}",
+            label,
+            id,
+            pluralize(**count, "node")
+        );
     }
     std::fs::write(dir.join("Glossary.md"), out)?;
     Ok(1)
@@ -983,10 +1045,12 @@ fn render_cross_edge(
         .get(&e.dst_community)
         .cloned()
         .unwrap_or_else(|| format!("community-{}", e.dst_community));
-    let src_slug = community_slug(&src_label, e.src_community);
-    let dst_slug = community_slug(&dst_label, e.dst_community);
-    let src_link = format_link(&public_api_target(&src_slug), &src_label, style);
-    let dst_link = format_link(&public_api_target(&dst_slug), &dst_label, style);
+    // Communities are not navigable as their own notes (Public API notes are
+    // bucketed by directory group, not Louvain community), so link the labels
+    // to the Communities index, which lists every cluster. Linking them to a
+    // per-community Public API note would dangle.
+    let src_link = format_link("20-Architecture/Communities", &src_label, style);
+    let dst_link = format_link("20-Architecture/Communities", &dst_label, style);
     let _ = writeln!(
         out,
         "| {} | → | {} | {} | {:.2} |",
@@ -1143,25 +1207,33 @@ fn write_risk(
 
 fn write_ownership(
     output_dir: &Path,
-    _db: &GraphDb,
-    all_nodes: &[Node],
+    db: &GraphDb,
+    _all_nodes: &[Node],
     opts: &DocsOptions,
 ) -> anyhow::Result<usize> {
     let dir = output_dir.join("50-Ownership");
     std::fs::create_dir_all(&dir)?;
 
-    let authors: Vec<&Node> = all_nodes.iter().filter(|n| n.kind == "Author").collect();
+    // `(author, files_owned)` sorted by file count, descending. Count the rows
+    // here (contributors who actually own a file) so the headline matches the
+    // table — Author nodes with no surviving OWNS edge are excluded.
+    let ownership = db.get_ownership().unwrap_or_default();
     let mut content = String::new();
     if opts.frontmatter {
         content.push_str("---\ncgx_kind: owners\ntags: [ownership, cgx]\n---\n\n");
     }
     content.push_str("# File owners\n\n");
-    if authors.is_empty() {
+    if ownership.is_empty() {
         content.push_str("_(no author data — git layer may have been disabled during analyze)_\n");
     } else {
-        let _ = writeln!(content, "{} distinct contributor(s).\n", authors.len());
-        for a in &authors {
-            let _ = writeln!(content, "- {}", a.name);
+        let _ = writeln!(
+            content,
+            "{}, ranked by number of files they're a top contributor to.\n",
+            pluralize(ownership.len(), "distinct contributor")
+        );
+        content.push_str("| Contributor | Files owned |\n|---|---|\n");
+        for (author, files) in &ownership {
+            let _ = writeln!(content, "| {} | {} |", author, files);
         }
     }
     std::fs::write(dir.join("Owners.md"), content)?;

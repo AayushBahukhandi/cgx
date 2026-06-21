@@ -7581,6 +7581,62 @@ fn print_update_notice(current: &str, latest: &str) {
     eprintln!();
 }
 
+/// Run `cgx --version` from PATH (the freshly-installed binary, not this
+/// still-running process) and return its semver string, e.g. "0.5.2".
+fn installed_cgx_version() -> Option<String> {
+    let out = std::process::Command::new("cgx")
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Output looks like "cgx 0.5.2"
+    text.split_whitespace()
+        .nth(1)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// After a `brew upgrade` / `cargo install`, the package manager may exit 0
+/// even when nothing changed (already-latest, or a tap/registry that hasn't
+/// published the new release yet). Re-read the installed version and report
+/// honestly instead of unconditionally claiming success.
+fn report_upgrade_result(before: &str) {
+    match installed_cgx_version() {
+        Some(after) if version_is_newer(&after, before) => {
+            println!(
+                "  \u{2713} update complete: {} \u{2192} {} — restart your shell or open a new terminal",
+                before, after
+            );
+        }
+        Some(after) if after == before => {
+            println!(
+                "  \u{2014} still on {} after upgrade. The package index may not have published a newer build yet;",
+                after
+            );
+            println!("    try again shortly, or download a binary from:");
+            println!("    https://github.com/AayushBahukhandi/cgx/releases/latest");
+        }
+        // Version moved but our naive compare couldn't confirm "newer"
+        // (e.g. pre-release tags) — report the change without asserting direction.
+        Some(after) => {
+            println!(
+                "  \u{2713} installed version is now {} (was {}) — restart your shell or open a new terminal",
+                after, before
+            );
+        }
+        // Couldn't re-read the version (cgx not on PATH yet, etc.) — fall back
+        // to the old optimistic message rather than implying failure.
+        None => {
+            println!(
+                "  \u{2713} upgrade command finished — restart your shell or open a new terminal"
+            );
+        }
+    }
+}
+
 fn cmd_update(auto: bool) -> anyhow::Result<()> {
     use std::process::Command;
 
@@ -7628,11 +7684,10 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
             let status = Command::new("cargo")
                 .args(["install", "cgx-cli"])
                 .status()?;
-            if status.success() {
-                println!("  \u{2713} update complete");
-            } else {
+            if !status.success() {
                 anyhow::bail!("cargo install failed");
             }
+            report_upgrade_result(current);
         } else if is_homebrew {
             println!(
                 "  Detected Homebrew installation. Running: brew upgrade aayushbahukhandi/cgx/cgx"
@@ -7640,11 +7695,10 @@ fn cmd_update(auto: bool) -> anyhow::Result<()> {
             let status = Command::new("brew")
                 .args(["upgrade", "aayushbahukhandi/cgx/cgx"])
                 .status()?;
-            if status.success() {
-                println!("  \u{2713} update complete — restart your shell or open a new terminal");
-            } else {
+            if !status.success() {
                 anyhow::bail!("brew upgrade failed");
             }
+            report_upgrade_result(current);
         } else {
             println!("  Could not detect installation method.");
             println!("  Please download the latest binary from:");
