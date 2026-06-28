@@ -27,7 +27,11 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-26
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            # Pin to windows-2025 (VS2022 / MSVC 14.4x). The `windows-latest`
+            # label rolled forward to the VS2026 image (windows-2025-vs2026),
+            # whose newer MSVC crashes compiling DuckDB's bundled C++ (cl.exe
+            # exit code 2, no diagnostics). v0.5.2 built fine on windows-2025.
+            os: windows-2025
 
     steps:
       - uses: actions/checkout@v4
@@ -47,23 +51,23 @@ jobs:
         run: npm ci && npm run build
 
       - name: Copy web UI into crate for embedding (Unix)
-        if: matrix.os != 'windows-latest'
+        if: runner.os != 'Windows'
         run: cp -r packages/web-ui/dist crates/cgx-cli/web-ui-dist
 
       - name: Copy web UI into crate for embedding (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         run: Copy-Item -Recurse packages/web-ui/dist crates/cgx-cli/web-ui-dist
 
       - name: Build binary (Unix)
-        if: matrix.os != 'windows-latest'
+        if: runner.os != 'Windows'
         run: cargo build --workspace --release --locked --target ${{ matrix.target }}
 
       - name: Build binary (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         run: cargo build --workspace --release --locked --target ${{ matrix.target }}
 
       - name: Package binary (Unix)
-        if: matrix.os != 'windows-latest'
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/cgx dist/
@@ -72,7 +76,7 @@ jobs:
           tar czf ../cgx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz cgx web-ui
 
       - name: Package binary (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force -Path dist
           Copy-Item target/${{ matrix.target }}/release/cgx.exe dist/
