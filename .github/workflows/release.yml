@@ -27,11 +27,12 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-26
           - target: x86_64-pc-windows-msvc
-            # Pin to windows-2025 (VS2022 / MSVC 14.4x). The `windows-latest`
-            # label rolled forward to the VS2026 image (windows-2025-vs2026),
-            # whose newer MSVC crashes compiling DuckDB's bundled C++ (cl.exe
-            # exit code 2, no diagnostics). v0.5.2 built fine on windows-2025.
-            os: windows-2025
+            # Pin to windows-2022 (VS2022 / MSVC 14.4x). Both `windows-latest`
+            # and `windows-2025` now ship VS2026 (MSVC 14.51), whose STL breaks
+            # DuckDB's bundled {fmt} — fmt/format.h fails with C2059/C2653
+            # ('Container' is not a class or namespace name). windows-2022 is
+            # the newest image still on the older, compatible MSVC.
+            os: windows-2022
 
     steps:
       - uses: actions/checkout@v4
